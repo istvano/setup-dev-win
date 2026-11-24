@@ -7,6 +7,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 # functions and State/Common helpers with -ModuleName Runner.
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'State.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Detect.psm1') -Force
 foreach ($stageModule in Get-ChildItem -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'stages') -Filter '*.psm1') {
     Import-Module $stageModule.FullName -Force
 }
@@ -79,7 +80,8 @@ function Invoke-SetupRun {
         LinuxRepoUrl = $LinuxRepoUrl
         LinuxRef = $LinuxRef
         Plan = [bool]$Plan
-        Edition = @{}
+        # Seeded here (a registry read) so a re-run that skips preflight still has it.
+        Edition = Get-EditionInfo
     }
     $explicit = [bool]$Stage
     $stages = if ($explicit) { @($Stage) } else { $script:StageOrder }

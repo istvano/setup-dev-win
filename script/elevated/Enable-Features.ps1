@@ -6,22 +6,14 @@
     Launched by Invoke-ElevatedScript in a fresh pwsh; it does not rely on the
     caller's module state and imports nothing. -Name is checked against an exact
     allowlist before anything else happens. Exit 0 = done, 3010 = restart needed,
-    1 = enabling failed, 2 = refused input.
+    1 = enabling failed, 2 = refused input. It enables only; it never reads state.
 .PARAMETER Name
     Feature names; a comma-separated token is split (-File passes one string per
     parameter, so the caller sends 'A,B' as a single token).
-.PARAMETER CheckOnly
-    Enable nothing; report each feature's State as JSON {"<feature>":"<State>"}.
-.PARAMETER OutFile
-    With -CheckOnly: write the JSON here instead of stdout. An elevated child's
-    stdout cannot cross ShellExecute RunAs, so the caller reads this file. Must be
-    a setup-dev-win-features-<32 hex>.json file directly in the temp directory.
 #>
 [CmdletBinding()]
 param(
-    [string[]]$Name = @(),
-    [switch]$CheckOnly,
-    [string]$OutFile
+    [string[]]$Name = @()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -33,9 +25,7 @@ function Invoke-FeatureRequest {
     [CmdletBinding()]
     [OutputType([int])]
     param(
-        [string[]]$Name = @(),
-        [switch]$CheckOnly,
-        [string]$OutFile
+        [string[]]$Name = @()
     )
     $names = @($Name | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if ($names.Count -eq 0) {
@@ -51,33 +41,17 @@ function Invoke-FeatureRequest {
         }
     }
 
-    if ($CheckOnly) {
-        $states = [ordered]@{}
-        foreach ($n in $names) {
-            $states[$n] = [string](Get-WindowsOptionalFeature -Online -FeatureName $n).State
-        }
-        $json = $states | ConvertTo-Json -Compress
-        if ($OutFile) {
-            $temp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/')
-            $full = [System.IO.Path]::GetFullPath($OutFile)
-            $leaf = [System.IO.Path]::GetFileName($full)
-            $parent = [System.IO.Path]::GetDirectoryName($full)
-            if ($leaf -cnotmatch '^setup-dev-win-features-[0-9a-f]{32}\.json$' -or $parent -ne $temp) {
-                Write-Host '[fail] -OutFile must be setup-dev-win-features-<32 hex>.json in the temp directory.'
-                return 2
-            }
-            [System.IO.File]::WriteAllText($full, $json)
-        }
-        else {
-            Write-Output $json
-        }
-        return 0
-    }
-
     $restart = $false
     foreach ($n in $names) {
         Write-Host "[info] Enabling $n"
-        $result = Enable-WindowsOptionalFeature -Online -FeatureName $n -All -NoRestart
+        try {
+            $result = Enable-WindowsOptionalFeature -Online -FeatureName $n -All -NoRestart
+        }
+        catch {
+            # Failure wins over a pending restart, but say that the restart is owed.
+            if ($restart) { Write-Host '[warn] An earlier feature was enabled and needs a restart even though this run failed.' }
+            throw
+        }
         if ($result.RestartNeeded) { $restart = $true }
     }
     if ($restart) { return 3010 }
@@ -87,7 +61,7 @@ function Invoke-FeatureRequest {
 # SETUP_DEV_WIN_NO_MAIN=1 lets tests dot-source the functions without running.
 if ($env:SETUP_DEV_WIN_NO_MAIN -ne '1') {
     try {
-        $code = Invoke-FeatureRequest -Name $Name -CheckOnly:$CheckOnly -OutFile $OutFile
+        $code = Invoke-FeatureRequest -Name $Name
     }
     catch {
         Write-Host "[fail] $($_.Exception.Message)"

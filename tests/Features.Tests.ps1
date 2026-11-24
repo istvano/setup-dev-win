@@ -27,51 +27,36 @@ Describe 'Get-RequiredFeatures' {
 }
 
 Describe 'Get-FeatureState' {
-    It 'reads the state non-elevated when that works' {
-        Mock -ModuleName WindowsFeatures Get-WindowsOptionalFeature { [pscustomobject]@{ State = 'Enabled' } }
+    It 'maps InstallState <State> to <Expected>' -ForEach @(
+        @{ State = 1; Expected = 'Enabled' }
+        @{ State = 2; Expected = 'Disabled' }
+        @{ State = 3; Expected = 'Absent' }
+        @{ State = 7; Expected = 'Unknown' }
+    ) {
+        $value = $State
+        Mock -ModuleName WindowsFeatures Get-CimInstance ({ [pscustomobject]@{ InstallState = $value } }.GetNewClosure())
+        Get-FeatureState -Name 'VirtualMachinePlatform' | Should-Be $Expected
+    }
+
+    It 'returns Unknown when there is no instance' {
+        Mock -ModuleName WindowsFeatures Get-CimInstance { $null }
+        Get-FeatureState -Name 'VirtualMachinePlatform' | Should-Be 'Unknown'
+    }
+
+    It 'queries Win32_OptionalFeature by name and never elevates' {
+        Mock -ModuleName WindowsFeatures Get-CimInstance { [pscustomobject]@{ InstallState = 1 } }
         Mock -ModuleName WindowsFeatures Invoke-ElevatedScript { 0 }
-        Get-FeatureState -Name 'VirtualMachinePlatform' | Should-Be 'Enabled'
+        Get-FeatureState -Name 'VirtualMachinePlatform' | Out-Null
+        Should-Invoke -ModuleName WindowsFeatures -CommandName Get-CimInstance -ParameterFilter {
+            $ClassName -eq 'Win32_OptionalFeature' -and $Filter -eq "Name='VirtualMachinePlatform'"
+        }
         Should-NotInvoke -ModuleName WindowsFeatures -CommandName Invoke-ElevatedScript
     }
 
-    It 'falls back to the elevated -CheckOnly read and removes the temp file' {
-        Mock -ModuleName WindowsFeatures Get-WindowsOptionalFeature { throw 'The requested operation requires elevation.' }
-        Mock -ModuleName WindowsFeatures Invoke-ElevatedScript {
-            $i = [array]::IndexOf($ArgumentList, '-OutFile')
-            Set-Content -LiteralPath $ArgumentList[$i + 1] -Value '{"VirtualMachinePlatform":"Disabled"}'
-            0
-        }
-        Get-FeatureState -Name 'VirtualMachinePlatform' | Should-Be 'Disabled'
-        Should-Invoke -ModuleName WindowsFeatures -CommandName Invoke-ElevatedScript -ParameterFilter {
-            $Name -eq 'Enable-Features' -and $ArgumentList -contains '-CheckOnly' -and $ArgumentList -contains 'VirtualMachinePlatform'
-        }
-    }
-
-    It 'removes the temp file even when the elevated read fails' {
-        Mock -ModuleName WindowsFeatures Get-WindowsOptionalFeature { throw 'Access is denied' }
-        $script:seen = $null
-        Mock -ModuleName WindowsFeatures Invoke-ElevatedScript {
-            $i = [array]::IndexOf($ArgumentList, '-OutFile')
-            Set-Content -LiteralPath $ArgumentList[$i + 1] -Value 'x'
-            $env:FEATURES_TEST_OUT = $ArgumentList[$i + 1]
-            1
-        }
-        { Get-FeatureState -Name 'VirtualMachinePlatform' } | Should-Throw
-        Test-Path -LiteralPath $env:FEATURES_TEST_OUT | Should-BeFalse
-    }
-
-    It 'returns Unknown without elevating under -NoElevate' {
-        Mock -ModuleName WindowsFeatures Get-WindowsOptionalFeature { throw 'requires elevation' }
-        Mock -ModuleName WindowsFeatures Invoke-ElevatedScript { 0 }
-        Get-FeatureState -Name 'VirtualMachinePlatform' -NoElevate | Should-Be 'Unknown'
-        Should-NotInvoke -ModuleName WindowsFeatures -CommandName Invoke-ElevatedScript
-    }
-
-    It 'rethrows an error that is not about elevation' {
-        Mock -ModuleName WindowsFeatures Get-WindowsOptionalFeature { throw 'disk on fire' }
-        Mock -ModuleName WindowsFeatures Invoke-ElevatedScript { 0 }
-        { Get-FeatureState -Name 'VirtualMachinePlatform' } | Should-Throw
-        Should-NotInvoke -ModuleName WindowsFeatures -CommandName Invoke-ElevatedScript
+    It 'doubles a single quote in the name' {
+        Mock -ModuleName WindowsFeatures Get-CimInstance { $null }
+        Get-FeatureState -Name "a'b" | Out-Null
+        Should-Invoke -ModuleName WindowsFeatures -CommandName Get-CimInstance -ParameterFilter { $Filter -eq "Name='a''b'" }
     }
 }
 
@@ -134,24 +119,11 @@ Describe 'Enable-Features.ps1' {
         Should-Invoke Enable-WindowsOptionalFeature -Times 2 -Exactly
     }
 
-    It '-CheckOnly enables nothing and writes JSON to the OutFile' {
-        Mock Enable-WindowsOptionalFeature { throw 'must not be called' }
-        Mock Get-WindowsOptionalFeature { [pscustomobject]@{ State = 'Disabled' } }
-        $out = Join-Path ([System.IO.Path]::GetTempPath()) ('setup-dev-win-features-{0}.json' -f [guid]::NewGuid().ToString('N'))
-        try {
-            Invoke-FeatureRequest -Name @('VirtualMachinePlatform') -CheckOnly -OutFile $out | Should-Be 0
-            (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).VirtualMachinePlatform | Should-Be 'Disabled'
-            Should-NotInvoke Enable-WindowsOptionalFeature
-        }
-        finally { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
-    }
-
-    It '-CheckOnly refuses an OutFile outside the temp naming scheme' {
-        Mock Get-WindowsOptionalFeature { [pscustomobject]@{ State = 'Enabled' } }
+    It 'still exits 1 when a later feature throws after RestartNeeded, naming the pending restart' {
+        Mock Enable-WindowsOptionalFeature { if ($FeatureName -eq 'VirtualMachinePlatform') { [pscustomobject]@{ RestartNeeded = $true } } else { throw 'boom' } }
         Mock Write-Host {}
-        $bad = Join-Path ([System.IO.Path]::GetTempPath()) 'evil.json'
-        Invoke-FeatureRequest -Name @('VirtualMachinePlatform') -CheckOnly -OutFile $bad | Should-Be 2
-        Test-Path -LiteralPath $bad | Should-BeFalse
+        { Invoke-FeatureRequest -Name @('VirtualMachinePlatform,Microsoft-Hyper-V-All') } | Should-Throw
+        Should-Invoke Write-Host -ParameterFilter { $Object -like '*needs a restart*' }
     }
 
     It 'run as a script, exits non-zero for a refused name' {
@@ -180,7 +152,7 @@ Describe 'Invoke-FeaturesStage' {
             }
             Mock -ModuleName Features Get-WslVersion { $Wsl }.GetNewClosure()
             Mock -ModuleName Features Invoke-ElevatedScript { $ElevatedExit }.GetNewClosure()
-            Mock -ModuleName Features Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = [string[]]@() } }
+            Mock -ModuleName Features Invoke-WslCommand { 0 }
             Mock -ModuleName Features Write-Info {}
             Mock -ModuleName Features Write-Ok {}
             Mock -ModuleName Features Write-Warn {}
@@ -192,7 +164,7 @@ Describe 'Invoke-FeaturesStage' {
         Initialize-Stage
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'done'
         Should-NotInvoke -ModuleName Features -CommandName Invoke-ElevatedScript
-        Should-NotInvoke -ModuleName Features -CommandName Invoke-Native
+        Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
     }
 
     It 'enables missing features through the elevated script' {
@@ -208,16 +180,10 @@ Describe 'Invoke-FeaturesStage' {
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'reboot-required'
     }
 
-    It 'returns reboot-required when a feature is already EnablePending' {
-        Initialize-Stage -States @('EnablePending')
-        Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'reboot-required'
-        Should-NotInvoke -ModuleName Features -CommandName Invoke-ElevatedScript
-    }
-
     It 'fails when the elevated script fails' {
         Initialize-Stage -States @('Disabled') -ElevatedExit 1
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'failed'
-        Should-NotInvoke -ModuleName Features -CommandName Invoke-Native
+        Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
     }
 
     It 'fails with a warning when UAC is declined' {
@@ -230,29 +196,42 @@ Describe 'Invoke-FeaturesStage' {
     It 'installs and updates WSL when wsl --version fails' {
         Initialize-Stage -Wsl $null
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'done'
-        Should-Invoke -ModuleName Features -CommandName Invoke-Native -ParameterFilter { $ArgumentList -contains '--install' -and $ArgumentList -contains '--no-distribution' }
-        Should-Invoke -ModuleName Features -CommandName Invoke-Native -ParameterFilter { $ArgumentList -contains '--update' }
+        Should-Invoke -ModuleName Features -CommandName Invoke-WslCommand -ParameterFilter { $ArgumentList -contains '--install' -and $ArgumentList -contains '--no-distribution' }
+        Should-Invoke -ModuleName Features -CommandName Invoke-WslCommand -ParameterFilter { $ArgumentList -contains '--update' }
     }
 
     It 'installs WSL when it is below the minimum version' {
         Initialize-Stage -Wsl ([version]'2.0.0.0')
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'done'
-        Should-Invoke -ModuleName Features -CommandName Invoke-Native -Times 2 -Exactly
+        Should-Invoke -ModuleName Features -CommandName Invoke-WslCommand -Times 2 -Exactly
     }
 
-    It 'fails with the output when wsl --install fails' {
+    It 'fails when wsl --install exits non-zero' {
         Initialize-Stage -Wsl $null
-        Mock -ModuleName Features Invoke-Native { throw 'wsl.exe exited with code 1. boom' }
+        Mock -ModuleName Features Invoke-WslCommand { 1 }
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'failed'
-        Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*boom*' }
+        Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*exit code 1*' }
+    }
+
+    It 'elevates exactly once for several missing features' {
+        Initialize-Stage -States @('Disabled', 'Disabled')
+        Invoke-FeaturesStage -Context @{ Profiles = @('core', 'lab'); Plan = $false; Edition = @{ Edition = 'Professional'; IsHome = $false; IsPro = $true } } | Should-Be 'done'
+        Should-Invoke -ModuleName Features -CommandName Invoke-ElevatedScript -Times 1 -Exactly -ParameterFilter {
+            $ArgumentList -contains 'VirtualMachinePlatform,Microsoft-Hyper-V-All'
+        }
+    }
+
+    It 'maps exit code <Code> to failed with a message' -ForEach @(@{ Code = 1 }, @{ Code = 2 }, @{ Code = 5 }) {
+        Initialize-Stage -States @('Disabled') -ElevatedExit $Code
+        Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'failed'
+        Should-Invoke -ModuleName Features -CommandName Write-Warn
     }
 
     It 'plan prints what it would do and neither elevates nor installs' {
         Initialize-Stage -States @('Disabled') -Wsl $null
         Invoke-FeaturesStage -Context (Get-Ctx) -Plan | Should-Be 'done'
         Should-NotInvoke -ModuleName Features -CommandName Invoke-ElevatedScript
-        Should-NotInvoke -ModuleName Features -CommandName Invoke-Native
+        Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
         Should-Invoke -ModuleName Features -CommandName Write-Info -ParameterFilter { $Message -like 'Would enable*VirtualMachinePlatform*' }
-        Should-Invoke -ModuleName Features -CommandName Get-FeatureState -ParameterFilter { $NoElevate }
     }
 }

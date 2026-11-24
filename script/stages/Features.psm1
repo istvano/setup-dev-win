@@ -6,6 +6,22 @@ $PSNativeCommandUseErrorActionPreference = $true
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Common.psm1') -Force
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/WindowsFeatures.psm1') -Force
 
+function Invoke-WslCommand {
+    # Internal. Runs wsl.exe with its output streaming to the host (the download
+    # is long and the operator should see it), and returns the exit code.
+    [CmdletBinding()]
+    [OutputType([int])]
+    param([Parameter(Mandatory)][string[]]$ArgumentList)
+    $env:WSL_UTF8 = '1'
+    $previous = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        & wsl.exe @ArgumentList 2>&1 | Out-Host
+        return [int]$LASTEXITCODE
+    }
+    finally { $PSNativeCommandUseErrorActionPreference = $previous }
+}
+
 function Invoke-FeaturesStage {
     <#
     .SYNOPSIS
@@ -33,10 +49,10 @@ function Invoke-FeaturesStage {
 
     $states = @{}
     foreach ($feature in $required) {
-        $states[$feature] = Get-FeatureState -Name $feature -NoElevate:$Plan
+        $states[$feature] = Get-FeatureState -Name $feature
     }
-    $missing = @($required | Where-Object { $states[$_] -notin 'Enabled', 'EnablePending' })
-    $rebootNeeded = @($required | Where-Object { $states[$_] -eq 'EnablePending' }).Count -gt 0
+    $missing = @($required | Where-Object { $states[$_] -ne 'Enabled' })
+    $rebootNeeded = $false
 
     $wsl = Get-WslVersion
     $wslNeeded = ($null -eq $wsl) -or ($wsl -lt $minWsl)
@@ -58,15 +74,12 @@ function Invoke-FeaturesStage {
             Write-Warn "Could not run the elevated feature script (UAC declined?): $($_.Exception.Message)"
             return 'failed'
         }
-        if ($code -eq 3010) { $rebootNeeded = $true }
-        elseif ($code -ne 0) {
-            Write-Warn "The elevated feature script failed with exit code $code."
-            return 'failed'
-        }
-        else {
-            foreach ($feature in $missing) {
-                if ((Get-FeatureState -Name $feature) -eq 'EnablePending') { $rebootNeeded = $true }
-            }
+        switch ($code) {
+            0 { }
+            3010 { $rebootNeeded = $true }
+            2 { Write-Warn 'The elevated script refused: a feature name is not allowlisted.'; return 'failed' }
+            1 { Write-Warn 'The elevated script failed while enabling (see the elevated window).'; return 'failed' }
+            default { Write-Warn "The elevated script exited with code $code."; return 'failed' }
         }
     }
     else {
@@ -76,14 +89,12 @@ function Invoke-FeaturesStage {
     if ($wslNeeded) {
         Write-Info "Installing WSL (found: $(if ($wsl) { $wsl } else { 'none' }), need >= $minWsl)"
         foreach ($arguments in @(@('--install', '--no-distribution'), @('--update'))) {
-            try {
-                $result = Invoke-Native -FilePath 'wsl.exe' -ArgumentList $arguments -AllowExitCode 3010
-            }
-            catch {
-                Write-Warn "wsl.exe $($arguments -join ' ') failed: $($_.Exception.Message)"
+            $exit = Invoke-WslCommand -ArgumentList $arguments
+            if ($exit -eq 3010) { $rebootNeeded = $true }
+            elseif ($exit -ne 0) {
+                Write-Warn "wsl.exe $($arguments -join ' ') failed with exit code $exit (output above)."
                 return 'failed'
             }
-            if ($result.ExitCode -eq 3010) { $rebootNeeded = $true }
         }
     }
     else {

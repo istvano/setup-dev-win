@@ -16,6 +16,7 @@ Describe 'Invoke-SetupRun' {
         $script:Boot = [datetime]::new(2026, 1, 1, 8, 0, 0, [DateTimeKind]::Utc)
         Mock -ModuleName State Get-CimInstance { [pscustomobject]@{ LastBootUpTime = $script:Boot } }
         Mock -ModuleName Runner Test-IsElevated { $false }
+        Mock -ModuleName Runner Get-EditionInfo { @{ Edition = 'Professional'; IsHome = $false; IsPro = $true } }
         foreach ($n in 'Preflight', 'Features', 'Dotfiles', 'Wsl', 'Verify') {
             Mock -ModuleName Runner "Invoke-${n}Stage" { 'done' }
         }
@@ -59,6 +60,17 @@ Describe 'Invoke-SetupRun' {
         $script:Ctx.LinuxRepoUrl | Should-Be 'https://github.com/istvano/setup-dev-linux-wsl'
         $script:Ctx.Plan | Should-BeFalse
         $script:Ctx.ContainsKey('Edition') | Should-BeTrue
+    }
+
+    It 'seeds Edition before any stage so a re-run that skips preflight still has it' {
+        Set-StageResult -Stage 'preflight' -Result 'done'
+        Mock -ModuleName Runner Invoke-FeaturesStage {
+            $script:Ctx = $Context
+            'done'
+        }
+        Invoke-SetupRun -Profiles 'core,lab' | Should-Be 0
+        Should-NotInvoke -ModuleName Runner -CommandName Invoke-PreflightStage
+        $script:Ctx.Edition.IsPro | Should-BeTrue
     }
 
     It 'stops at reboot-required, exits 3010, and later stages do not run' {

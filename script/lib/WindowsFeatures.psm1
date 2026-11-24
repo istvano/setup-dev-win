@@ -34,43 +34,27 @@ function Get-RequiredFeatures {
 function Get-FeatureState {
     <#
     .SYNOPSIS
-        Returns a feature's State (Enabled, Disabled, EnablePending, ...).
+        Returns a feature's state: Enabled, Disabled, Absent or Unknown.
     .DESCRIPTION
-        Reads Get-WindowsOptionalFeature without elevation first. [verify] whether
-        that works non-elevated; the real machine settles it (Task 13). On an
-        elevation or access error it falls back to the elevated script's
-        -CheckOnly mode, which writes JSON to a temp file (stdout cannot cross
-        ShellExecute RunAs). With -NoElevate it returns 'Unknown' instead of
-        elevating, so -Plan never raises a UAC prompt.
+        Reads Win32_OptionalFeature through CIM, which needs no elevation
+        (the DISM feature cmdlet does, and may appear only under script/elevated).
+        EnablePending cannot be seen here; a pending restart is reported by the
+        elevated script's exit code 3010 instead.
     .PARAMETER Name
         The feature name.
-    .PARAMETER NoElevate
-        Never fall back to the elevated read.
     #>
     [CmdletBinding()]
     [OutputType([string])]
-    param(
-        [Parameter(Mandatory)][string]$Name,
-        [switch]$NoElevate
-    )
-    try {
-        return [string](Get-WindowsOptionalFeature -Online -FeatureName $Name).State
-    }
-    catch {
-        if ($_.Exception.Message -notmatch 'elevat|access|denied|privilege|0x800702E4') { throw }
-        if ($NoElevate) { return 'Unknown' }
-    }
-
-    $outFile = Join-Path ([System.IO.Path]::GetTempPath()) ('setup-dev-win-features-{0}.json' -f [guid]::NewGuid().ToString('N'))
-    try {
-        $code = Invoke-ElevatedScript -Name 'Enable-Features' -ArgumentList @('-CheckOnly', '-Name', $Name, '-OutFile', $outFile)
-        if ($code -ne 0) { throw "Reading the state of feature $Name failed (elevated script exit $code)." }
-        if (-not (Test-Path -LiteralPath $outFile -PathType Leaf)) { throw "The elevated read of feature $Name produced no result." }
-        $parsed = Get-Content -LiteralPath $outFile -Raw | ConvertFrom-Json
-        return [string]$parsed.$Name
-    }
-    finally {
-        Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+    param([Parameter(Mandatory)][string]$Name)
+    $escaped = $Name.Replace("'", "''")
+    $feature = Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='$escaped'" | Select-Object -First 1
+    if ($null -eq $feature) { return 'Unknown' }
+    # [verify on real machine, Task 13] InstallState: 1 Enabled, 2 Disabled, 3 Absent.
+    switch ([int]$feature.InstallState) {
+        1 { return 'Enabled' }
+        2 { return 'Disabled' }
+        3 { return 'Absent' }
+        default { return 'Unknown' }
     }
 }
 
