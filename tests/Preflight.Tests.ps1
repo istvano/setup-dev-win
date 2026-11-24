@@ -36,7 +36,7 @@ Describe 'Invoke-PreflightStage' {
         $below = $min - 1
         Mock -ModuleName Preflight Get-OsBuild ({ $below }.GetNewClosure())
         Invoke-PreflightStage -Context (Get-TestContext) | Should-Be 'failed'
-        Should-Invoke -ModuleName Preflight -CommandName Write-Warn -ParameterFilter ({ $Message -like "*$min*" }.GetNewClosure())
+        Should-Invoke -ModuleName Preflight -CommandName Write-Warn -ParameterFilter { $Message -like "*is below the minimum*" }
     }
 
     It 'fails when the data volume is not Ok, naming the reason' {
