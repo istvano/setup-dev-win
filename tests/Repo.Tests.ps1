@@ -127,3 +127,30 @@ Describe 'Workflows' {
         @($offenders) | Should-BeCollection @()
     }
 }
+
+Describe 'Elevation invariants' {
+    It 'admin-only feature and policy cmdlets appear only under script/elevated' {
+        $pattern = 'Enable-WindowsOptionalFeature|Disable-WindowsOptionalFeature|Set-ExecutionPolicy\s+-Scope\s+LocalMachine'
+        $offenders = foreach ($file in $script:ScriptFiles) {
+            $relative = $file.FullName.Substring($script:Root.Length + 1) -replace '\\', '/'
+            if ($relative -like 'tests/*' -or $relative -like 'script/elevated/*') { continue }
+            if ((Get-CodeLine -Path $file.FullName) -match $pattern) { $relative }
+        }
+        @($offenders) | Should-BeCollection @() -Because 'only script/elevated may change machine state'
+    }
+
+    It 'Containers-DisposableClientVM appears only in Enable-Features.ps1 (code) and tests' {
+        $offenders = foreach ($file in $script:ScriptFiles) {
+            $relative = $file.FullName.Substring($script:Root.Length + 1) -replace '\\', '/'
+            if ($relative -like 'tests/*') { continue }
+            if ((Get-CodeLine -Path $file.FullName) -match 'Containers-DisposableClientVM') { $relative }
+        }
+        # Enable-Features.ps1 names it only in comments (allowlist is exact), so no code line may.
+        @($offenders) | Should-BeCollection @() -Because 'ADR: never touch Windows Sandbox'
+    }
+
+    It 'every script under script/elevated is allowlisted explicitly' {
+        $elevated = @(Get-ChildItem -Path (Join-Path $script:Root 'script/elevated') -File | ForEach-Object Name)
+        $elevated | Should-BeCollection @('Enable-Features.ps1')
+    }
+}
