@@ -13,15 +13,18 @@ BeforeAll {
 Describe 'Invoke-WslStage' {
     BeforeEach {
         $script:Order = [System.Collections.Generic.List[string]]::new()
-        Mock -ModuleName Wsl Write-Info { }
+        $script:Infos = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName Wsl Write-Info { $script:Infos.Add($Message) }
         Mock -ModuleName Wsl Write-Warn { }
         Mock -ModuleName Wsl Write-Ok { }
         Mock -ModuleName Wsl Get-DistroLock { $script:Order.Add('lock'); @{ Name = 'Ubuntu-26.04' } }
         Mock -ModuleName Wsl Save-VerifiedImage { $script:Order.Add('save'); 'C:\img.wsl' }
         Mock -ModuleName Wsl Get-LinuxUserName { 'alice' }
+        Mock -ModuleName Wsl Get-LinuxUserName { 'bob' } -ParameterFilter { $Override -eq 'bob' }
+        Mock -ModuleName Wsl Set-SetupSetting { }
         $script:PwStatus = 'alice L 2026-11-24 0 99999 7 -1'
         Mock -ModuleName Wsl Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @($script:PwStatus) } }
-        Mock -ModuleName Wsl Install-DevDistro { $script:Order.Add('install'); $script:Record }
+        Mock -ModuleName Wsl Install-DevDistro { $script:Order.Add("install:$UserName"); $script:Record }
         Mock -ModuleName Wsl Assert-DistroPlacement { $script:Order.Add('placement') }
         Mock -ModuleName Wsl Assert-DefaultUser { $script:Order.Add('defaultuser') }
         Mock -ModuleName Wsl Set-DevUserPassword { $script:Order.Add('passwd') }
@@ -30,11 +33,34 @@ Describe 'Invoke-WslStage' {
 
     It 'runs the steps in order on a first install and returns done' {
         Invoke-WslStage -Context $script:Ctx | Should-Be 'done'
-        ($script:Order -join ',') | Should-Be 'lock,save,install,placement,defaultuser,passwd,handoff'
+        ($script:Order -join ',') | Should-Be 'lock,save,install:alice,placement,defaultuser,passwd,handoff'
         Should-Invoke -CommandName Invoke-LinuxHandoff -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
             $Url -eq 'https://github.com/istvano/setup-dev-linux-wsl' -and $Ref -eq 'main' }
         Should-Invoke -CommandName Save-VerifiedImage -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
             $Directory -eq (Join-Path ([System.IO.Path]::GetTempPath()) 'setup-dev-win') }
+    }
+
+    It 'uses Context.LinuxUser when set, prints it before installing and does not re-persist it' {
+        $ctx = $script:Ctx.Clone(); $ctx.LinuxUser = 'bob'
+        Invoke-WslStage -Context $ctx | Should-Be 'done'
+        ($script:Order -join ',') | Should-BeLikeString '*install:bob*'
+        $script:Infos | Should-ContainCollection @('Linux user: bob')
+        Should-Invoke -CommandName Get-LinuxUserName -ModuleName Wsl -Times 1 -Exactly -ParameterFilter { $Override -eq 'bob' }
+        Should-NotInvoke -CommandName Set-SetupSetting -ModuleName Wsl
+    }
+
+    It 'derives the user when Context.LinuxUser is unset and persists the derived name' {
+        Invoke-WslStage -Context $script:Ctx | Should-Be 'done'
+        $script:Infos | Should-ContainCollection @('Linux user: alice')
+        Should-Invoke -CommandName Set-SetupSetting -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
+            $Name -eq 'linuxUser' -and $Value -eq 'alice' }
+    }
+
+    It 'adds the recovery hint when the default user check fails on a re-run' {
+        Mock -ModuleName Wsl Assert-DefaultUser { throw "dev starts as 'root', expected 'alice'." }
+        Invoke-WslStage -Context $script:Ctx | Should-Be 'failed'
+        Should-Invoke -CommandName Write-Warn -ModuleName Wsl -ParameterFilter {
+            $Message -like "*starts as 'root'*wsl --unregister dev*pwsh -File script\setup.ps1 -Stage wsl*" }
     }
 
     It 'asks for a password when dev exists but the password is still locked' {

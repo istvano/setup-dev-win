@@ -82,4 +82,64 @@ Describe 'State' {
             $env:LOCALAPPDATA = $saved
         }
     }
+
+    It 'Get-SetupSetting returns $null when nothing is recorded' {
+        Get-SetupSetting -Name 'linuxUser' | Should-BeNull
+    }
+
+    It 'round-trips settings without disturbing stage results' {
+        Set-StageResult -Stage 'features' -Result 'done'
+        Set-SetupSetting -Name 'linuxUser' -Value 'alice'
+        Set-SetupSetting -Name 'distroRoot' -Value 'E:\WSL'
+        Set-StageResult -Stage 'wsl' -Result 'failed'
+        Get-SetupSetting -Name 'linuxUser' | Should-Be 'alice'
+        Get-SetupSetting -Name 'distroRoot' | Should-Be 'E:\WSL'
+        Get-StageResult -Stage 'features' | Should-Be 'done'
+        Get-StageResult -Stage 'wsl' | Should-Be 'failed'
+    }
+
+    It 'rejects an unknown setting name' {
+        { Set-SetupSetting -Name 'shell' -Value 'x' } | Should-Throw
+        { Get-SetupSetting -Name 'shell' } | Should-Throw
+    }
+
+    It 'setting write is atomic: a serialisation failure leaves the old file unchanged' {
+        Set-SetupSetting -Name 'profiles' -Value 'core'
+        $path = $env:SETUP_DEV_WIN_STATE
+        $before = Get-Content -LiteralPath $path -Raw
+        Mock -ModuleName State ConvertTo-Json { throw 'cannot serialise' }
+        { Set-SetupSetting -Name 'profiles' -Value 'core,lab' } | Should-Throw -ExceptionMessage '*cannot serialise*'
+        Get-Content -LiteralPath $path -Raw | Should-Be $before
+        @(Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Filter '*.tmp').Count | Should-Be 0
+    }
+}
+
+Describe 'Resolve-SetupSetting' {
+    BeforeEach {
+        $env:SETUP_DEV_WIN_STATE = Join-Path $TestDrive "sub/state-$([guid]::NewGuid().ToString('N')).json"
+        Mock -ModuleName State Get-CimInstance { [pscustomobject]@{ LastBootUpTime = [datetime]::UtcNow } }
+    }
+    AfterAll {
+        $env:SETUP_DEV_WIN_STATE = $null
+    }
+
+    It 'with no flag and nothing persisted returns the default' {
+        Resolve-SetupSetting -Name 'distroRoot' -Default 'D:\WSL' | Should-Be 'D:\WSL'
+    }
+
+    It 'a persisted value wins over the default' {
+        Set-SetupSetting -Name 'distroRoot' -Value 'E:\WSL'
+        Resolve-SetupSetting -Name 'distroRoot' -Default 'D:\WSL' | Should-Be 'E:\WSL'
+    }
+
+    It 'an explicit value wins over the persisted one' {
+        Set-SetupSetting -Name 'distroRoot' -Value 'E:\WSL'
+        Resolve-SetupSetting -Name 'distroRoot' -Value 'F:\WSL' -Explicit -Default 'D:\WSL' | Should-Be 'F:\WSL'
+    }
+
+    It 'never writes' {
+        $null = Resolve-SetupSetting -Name 'distroRoot' -Value 'F:\WSL' -Explicit -Default 'D:\WSL'
+        $null = Resolve-SetupSetting -Name 'profiles' -Default 'core'
+        Test-Path -LiteralPath $env:SETUP_DEV_WIN_STATE | Should-BeFalse
+    }
 }

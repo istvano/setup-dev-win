@@ -8,6 +8,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'State.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Detect.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Distro.psm1') -Force
 foreach ($stageModule in Get-ChildItem -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'stages') -Filter '*.psm1') {
     Import-Module $stageModule.FullName -Force
 }
@@ -40,6 +41,11 @@ function Invoke-SetupRun {
         skipped (verify always runs); a stage recorded reboot-required re-runs only
         after a reboot. -Stage runs one stage regardless of state. -Plan passes
         Plan to every stage and records nothing.
+        Profiles, DistroRoot and LinuxUser are operator choices kept in the state
+        file (ADR-015): a flag given explicitly wins and is persisted; without the
+        flag the persisted value is used; without either, the default (core,
+        D:\WSL, the Linux user derived by the wsl stage). -Plan reads them and
+        persists nothing.
     .PARAMETER Profiles
         Comma-separated profile list; core,lab are valid; core is always included.
     .PARAMETER Stage
@@ -53,16 +59,19 @@ function Invoke-SetupRun {
         Branch, tag or commit of that repository.
     .PARAMETER DistroRoot
         Root directory for WSL distributions.
+    .PARAMETER LinuxUser
+        The Linux user the wsl stage creates (default derived from the Windows user name).
     #>
     [CmdletBinding()]
     [OutputType([int])]
     param(
-        [string]$Profiles = 'core',
+        [string]$Profiles,
         [ValidateSet('preflight', 'features', 'dotfiles', 'wsl', 'verify')][string]$Stage,
         [switch]$Plan,
         [string]$LinuxRepoUrl,
         [string]$LinuxRef = 'main',
-        [string]$DistroRoot = 'D:\WSL'
+        [string]$DistroRoot,
+        [string]$LinuxUser
     )
 
     if (Test-IsElevated) {
@@ -70,7 +79,21 @@ function Invoke-SetupRun {
         return 1
     }
     try {
-        $profileList = ConvertTo-ProfileList -Profiles $Profiles
+        $bound = $PSBoundParameters
+        $profileText = Resolve-SetupSetting -Name 'profiles' -Value $Profiles -Explicit:($bound.ContainsKey('Profiles')) -Default 'core'
+        $profileList = ConvertTo-ProfileList -Profiles $profileText
+        $root = Resolve-SetupSetting -Name 'distroRoot' -Value $DistroRoot -Explicit:($bound.ContainsKey('DistroRoot')) -Default 'D:\WSL'
+        $user = Resolve-SetupSetting -Name 'linuxUser' -Value $LinuxUser -Explicit:($bound.ContainsKey('LinuxUser'))
+        # Validated before it is kept: the name reaches user-data and a command line.
+        if ($user) { $user = Get-LinuxUserName -Override $user }
+        if (-not $Plan) {
+            $chosen = [ordered]@{ profiles = ($profileList -join ','); distroRoot = $root; linuxUser = $user }
+            foreach ($key in $chosen.Keys) {
+                if ($chosen[$key] -and $chosen[$key] -cne (Get-SetupSetting -Name $key)) {
+                    Set-SetupSetting -Name $key -Value $chosen[$key]
+                }
+            }
+        }
     }
     catch {
         Write-Warn $_.Exception.Message
@@ -84,7 +107,8 @@ function Invoke-SetupRun {
     }
     $context = @{
         Profiles = $profileList
-        DistroRoot = $DistroRoot
+        DistroRoot = $root
+        LinuxUser = $user
         LinuxRepoUrl = $LinuxRepoUrl
         LinuxRef = $LinuxRef
         Plan = [bool]$Plan

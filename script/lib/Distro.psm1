@@ -112,16 +112,17 @@ $script:LinuxUserPattern = '^[a-z_][a-z0-9_-]{0,31}\z'
 $script:ReservedUserNames = @('root', 'daemon', 'bin', 'sys', 'sync', 'games', 'man', 'lp', 'mail', 'news', 'uucp',
     'proxy', 'www-data', 'backup', 'list', 'irc', 'nobody', 'systemd-network', 'systemd-resolve', 'messagebus',
     'sshd', 'syslog')
-$script:RecoveryHint = 'To retry: wsl --unregister dev, then re-run script\setup.ps1 -Stage wsl.'
+$script:RecoveryHint = 'To retry: wsl --unregister dev, then pwsh -File script\setup.ps1 -Stage wsl.'
+$script:LinuxUserHint = 'Run pwsh -File script\setup.ps1 -LinuxUser <name>.'
 
 function Assert-LinuxUserName {
     # Internal. Throws unless Name is a valid, non-reserved Linux login name.
     param([string]$Name)
     if ($Name -cnotmatch $script:LinuxUserPattern) {
-        throw "Cannot use '$Name' as a Linux user name (must match $script:LinuxUserPattern). Pass -LinuxUser <name>."
+        throw "Cannot use '$Name' as a Linux user name (must match $script:LinuxUserPattern). $script:LinuxUserHint"
     }
     if ($Name -in $script:ReservedUserNames -or $Name.StartsWith('systemd-', [System.StringComparison]::Ordinal)) {
-        throw "Cannot use '$Name' as the Linux user: it is a reserved system name. Pass -LinuxUser <name>."
+        throw "Cannot use '$Name' as the Linux user: it is a reserved system name. $script:LinuxUserHint"
     }
 }
 
@@ -380,6 +381,17 @@ function Set-DevUserPassword {
     if ($code -ne 0) { throw "passwd exited with code $code." }
 }
 
+function Get-DistroRecoveryHint {
+    <#
+    .SYNOPSIS
+        Returns the instruction for retrying after a partial or wrong dev install.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $script:RecoveryHint
+}
+
 function Assert-DistroPlacement {
     <#
     .SYNOPSIS
@@ -403,4 +415,4 @@ function Assert-DistroPlacement {
 
 Export-ModuleMember -Function Get-DistroLock, Save-VerifiedImage, Get-LinuxUserName, New-CloudInitUserData,
 Get-RegisteredDistro, Install-DevDistro, Set-DevUserPassword, Assert-DistroPlacement, Assert-DefaultUser,
-Get-LastResultLine
+Get-LastResultLine, Get-DistroRecoveryHint

@@ -43,6 +43,12 @@ function Invoke-FeaturesStage {
         [Parameter(Mandatory)][hashtable]$Context,
         [switch]$Plan
     )
+    # Get-RequiredFeatures drops Hyper-V on Home, so without this check
+    # -Stage features with lab on Home would report done.
+    if (@($Context.Profiles) -contains 'lab' -and -not ($Context.Edition -and $Context.Edition.IsPro)) {
+        Write-Warn 'The lab profile needs Windows 11 Pro (Hyper-V); this machine is not Pro.'
+        return 'failed'
+    }
     $pins = Import-PowerShellDataFile -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/pins.psd1')
     $minWsl = [version]$pins.MinWslVersion
     $required = @(Get-RequiredFeatures -Profiles @($Context.Profiles) -Edition $Context.Edition)

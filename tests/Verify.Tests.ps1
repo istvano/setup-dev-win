@@ -64,6 +64,16 @@ Describe 'Invoke-VerifyChecks' {
         (Test-Line 'FAIL *VirtualMachinePlatform*') | Should-BeTrue
     }
 
+    It 'check 2: the hint names pwsh -File and adds -Profiles lab only with lab' {
+        $script:Features.VirtualMachinePlatform = 'Disabled'
+        $null = Invoke-VerifyChecks -Context (New-Ctx)
+        (Test-Line 'FAIL *run pwsh -File script\setup.ps1 -Stage features.*') | Should-BeTrue
+        $script:Lines.Clear()
+        $script:Features['Microsoft-Hyper-V-All'] = 'Enabled'
+        $null = Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'lab'))
+        (Test-Line 'FAIL *run pwsh -File script\setup.ps1 -Stage features -Profiles lab.*') | Should-BeTrue
+    }
+
     It 'check 2: Hyper-V enabled without lab fails' {
         $script:Features['Microsoft-Hyper-V-All'] = 'Enabled'
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
@@ -130,6 +140,13 @@ Describe 'Invoke-VerifyChecks' {
         (Test-Line "FAIL *starts as 'root'*") | Should-BeTrue
     }
 
+    It 'check 5: uses Context.LinuxUser when set instead of deriving it' {
+        $ctx = New-Ctx; $ctx.LinuxUser = 'bob'
+        $null = Invoke-VerifyChecks -Context $ctx
+        Should-Invoke -CommandName Assert-DefaultUser -ModuleName Verify -Times 1 -Exactly -ParameterFilter { $UserName -eq 'bob' }
+        Should-NotInvoke -CommandName Get-LinuxUserName -ModuleName Verify
+    }
+
     It 'check 6: a failing Linux verify fails with its exit code, and the output is shown' {
         $script:LinuxExit = 1
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
@@ -180,12 +197,52 @@ Describe 'Invoke-VerifyStage' {
     }
 }
 
-Describe 'script/verify.ps1' {
-    It 'exists and takes -DistroRoot and -Profiles' {
-        $path = Join-Path $script:Root 'script/verify.ps1'
-        Test-Path -LiteralPath $path | Should-BeTrue
-        $cmd = Get-Command $path
-        $cmd.Parameters.ContainsKey('DistroRoot') | Should-BeTrue
-        $cmd.Parameters.ContainsKey('Profiles') | Should-BeTrue
+Describe 'Invoke-VerifyCommand (script/verify.ps1)' {
+    BeforeEach {
+        $env:SETUP_DEV_WIN_STATE = Join-Path $TestDrive "state-$([guid]::NewGuid().ToString('N')).json"
+        Mock -ModuleName Verify Get-EditionInfo { $script:Pro }
+        Mock -ModuleName Verify Write-Host { }
+        $script:Ok = $true
+        Mock -ModuleName Verify Invoke-VerifyChecks {
+            $script:VerifyCtx = $Context
+            @([pscustomobject]@{ Name = 'a'; Ok = $script:Ok; Reason = '' })
+        }
+    }
+    AfterAll { $env:SETUP_DEV_WIN_STATE = $null }
+
+    It 'uses the defaults when nothing is persisted and no flag is given' {
+        Invoke-VerifyCommand | Should-Be 0
+        ($script:VerifyCtx.Profiles -join ',') | Should-Be 'core'
+        $script:VerifyCtx.DistroRoot | Should-Be 'D:\WSL'
+        $script:VerifyCtx.LinuxUser | Should-BeFalsy
+        Test-Path -LiteralPath $env:SETUP_DEV_WIN_STATE | Should-BeFalse
+    }
+
+    It 'reads the persisted choices when the flags are absent' {
+        Set-Content -LiteralPath $env:SETUP_DEV_WIN_STATE -Value '{ "settings": { "profiles": "core,lab", "distroRoot": "E:\\X", "linuxUser": "bob" } }'
+        Invoke-VerifyCommand | Should-Be 0
+        ($script:VerifyCtx.Profiles -join ',') | Should-Be 'core,lab'
+        $script:VerifyCtx.DistroRoot | Should-Be 'E:\X'
+        $script:VerifyCtx.LinuxUser | Should-Be 'bob'
+    }
+
+    It 'a flag wins and nothing is written' {
+        $json = '{ "settings": { "profiles": "core,lab", "distroRoot": "E:\\X", "linuxUser": "bob" } }'
+        Set-Content -LiteralPath $env:SETUP_DEV_WIN_STATE -Value $json
+        Invoke-VerifyCommand -DistroRoot 'F:\Y' -Profiles 'core' -LinuxUser 'carol' | Should-Be 0
+        ($script:VerifyCtx.Profiles -join ',') | Should-Be 'core'
+        $script:VerifyCtx.DistroRoot | Should-Be 'F:\Y'
+        $script:VerifyCtx.LinuxUser | Should-Be 'carol'
+        (Get-Content -LiteralPath $env:SETUP_DEV_WIN_STATE -Raw).Trim() | Should-Be $json
+    }
+
+    It 'returns 1 when a check fails' {
+        $script:Ok = $false
+        Invoke-VerifyCommand | Should-Be 1
+    }
+
+    It 'script/verify.ps1 takes -DistroRoot, -Profiles and -LinuxUser' {
+        $cmd = Get-Command (Join-Path $script:Root 'script/verify.ps1')
+        foreach ($p in 'DistroRoot', 'Profiles', 'LinuxUser') { $cmd.Parameters.ContainsKey($p) | Should-BeTrue -Because $p }
     }
 }

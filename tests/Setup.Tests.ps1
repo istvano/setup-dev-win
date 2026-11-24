@@ -156,6 +156,55 @@ Describe 'Invoke-SetupRun' {
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-PreflightStage
     }
 
+    It 'first run with no flags uses and persists the defaults; LinuxUser stays unset' {
+        Mock -ModuleName Runner Invoke-FeaturesStage { $script:Ctx = $Context; 'done' }
+        Invoke-SetupRun | Should-Be 0
+        ($script:Ctx.Profiles -join ',') | Should-Be 'core'
+        $script:Ctx.DistroRoot | Should-Be 'D:\WSL'
+        $script:Ctx.LinuxUser | Should-BeFalsy
+        Get-SetupSetting -Name 'profiles' | Should-Be 'core'
+        Get-SetupSetting -Name 'distroRoot' | Should-Be 'D:\WSL'
+        Get-SetupSetting -Name 'linuxUser' | Should-BeNull
+    }
+
+    It 'an explicit flag is persisted and used by a later run without the flag' {
+        Mock -ModuleName Runner Invoke-FeaturesStage { $script:Ctx = $Context; 'done' }
+        Invoke-SetupRun -Profiles 'lab' -DistroRoot 'E:\X' -LinuxUser 'alice' | Should-Be 0
+        Get-SetupSetting -Name 'linuxUser' | Should-Be 'alice'
+        Invoke-SetupRun -Stage 'features' | Should-Be 0
+        ($script:Ctx.Profiles -join ',') | Should-Be 'core,lab'
+        $script:Ctx.DistroRoot | Should-Be 'E:\X'
+        $script:Ctx.LinuxUser | Should-Be 'alice'
+    }
+
+    It 'an explicit flag wins over the persisted value and replaces it' {
+        Mock -ModuleName Runner Invoke-FeaturesStage { $script:Ctx = $Context; 'done' }
+        Set-SetupSetting -Name 'profiles' -Value 'core,lab'
+        Set-SetupSetting -Name 'linuxUser' -Value 'alice'
+        Invoke-SetupRun -Stage 'features' -Profiles 'core' -LinuxUser 'bob' | Should-Be 0
+        ($script:Ctx.Profiles -join ',') | Should-Be 'core'
+        $script:Ctx.LinuxUser | Should-Be 'bob'
+        Get-SetupSetting -Name 'profiles' | Should-Be 'core'
+        Get-SetupSetting -Name 'linuxUser' | Should-Be 'bob'
+    }
+
+    It 'refuses an invalid -LinuxUser before any stage and persists nothing' {
+        Invoke-SetupRun -LinuxUser 'root' | Should-Be 1
+        ($script:Warned -join ' ') | Should-BeLikeString -Expected '*root*'
+        Should-NotInvoke -ModuleName Runner -CommandName Invoke-PreflightStage
+        Get-SetupSetting -Name 'linuxUser' | Should-BeNull
+    }
+
+    It '-Plan reads persisted choices but writes none' {
+        Mock -ModuleName Runner Invoke-FeaturesStage { $script:Ctx = $Context; 'done' }
+        Set-SetupSetting -Name 'distroRoot' -Value 'E:\X'
+        Invoke-SetupRun -Plan -LinuxUser 'carol' | Should-Be 0
+        $script:Ctx.DistroRoot | Should-Be 'E:\X'
+        $script:Ctx.LinuxUser | Should-Be 'carol'
+        Get-SetupSetting -Name 'linuxUser' | Should-BeNull
+        Get-SetupSetting -Name 'profiles' | Should-BeNull
+    }
+
     It 'treats an empty profile list as core' {
         Mock -ModuleName Runner Invoke-FeaturesStage { $script:Ctx = $Context; 'done' }
         Invoke-SetupRun -Profiles '' | Should-Be 0

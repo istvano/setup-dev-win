@@ -9,6 +9,8 @@ Import-Module (Join-Path $libRoot 'Detect.psm1') -Force
 Import-Module (Join-Path $libRoot 'WindowsFeatures.psm1') -Force
 Import-Module (Join-Path $libRoot 'WslConfig.psm1') -Force
 Import-Module (Join-Path $libRoot 'Distro.psm1') -Force
+# No -Force: share the State instance the runner (or verify.ps1) loaded.
+Import-Module (Join-Path $libRoot 'State.psm1')
 
 function Write-CheckResult {
     # Internal. Prints one OK/FAIL line and returns the result object.
@@ -48,7 +50,8 @@ function Invoke-VerifyChecks {
         checks. Check 7 (Kernel DMA Protection, systemd state) is informational and
         returns nothing. Read-only: nothing is modified.
     .PARAMETER Context
-        Run context: Profiles, DistroRoot, Edition (seeded from Get-EditionInfo when absent).
+        Run context: Profiles, DistroRoot, LinuxUser (derived when empty), Edition
+        (seeded from Get-EditionInfo when absent).
     .OUTPUTS
         [pscustomobject] with Name, Ok, Reason, one per check.
     #>
@@ -62,6 +65,8 @@ function Invoke-VerifyChecks {
     $edition = if ($Context.ContainsKey('Edition') -and $Context.Edition) { $Context.Edition } else { Get-EditionInfo }
     $profiles = @($Context.Profiles)
     $root = [string]$Context.DistroRoot
+    $linuxUser = if ($Context.ContainsKey('LinuxUser')) { [string]$Context.LinuxUser } else { '' }
+    $featuresHint = if ($profiles -contains 'lab') { 'pwsh -File script\setup.ps1 -Stage features -Profiles lab' } else { 'pwsh -File script\setup.ps1 -Stage features' }
     $results = [System.Collections.Generic.List[pscustomobject]]::new()
 
     # 1. Build and edition.
@@ -77,7 +82,7 @@ function Invoke-VerifyChecks {
                 $required = @(Get-RequiredFeatures -Profiles $profiles -Edition $edition)
                 foreach ($feature in $required) {
                     $state = Get-FeatureState -Name $feature
-                    if ($state -ne 'Enabled') { $problems.Add("$feature is $state (expected Enabled); run script\setup.ps1 -Stage features.") }
+                    if ($state -ne 'Enabled') { $problems.Add("$feature is $state (expected Enabled); run $featuresHint.") }
                 }
                 if ('Microsoft-Hyper-V-All' -notin $required) {
                     $hyperV = Get-FeatureState -Name 'Microsoft-Hyper-V-All'
@@ -104,9 +109,10 @@ function Invoke-VerifyChecks {
     # 5. dev is registered, under the root, WSL 2, and starts as the right user.
     $record = Get-RegisteredDistro -Name 'dev'
     $results.Add((Invoke-VerifyCheck -Name 'dev distro' -Check {
-                if ($null -eq $record) { return 'distro dev is not registered; run script\setup.ps1 -Stage wsl.' }
+                if ($null -eq $record) { return 'distro dev is not registered; run pwsh -File script\setup.ps1 -Stage wsl.' }
                 Assert-DistroPlacement -Distro $record -Root $root
-                Assert-DefaultUser -UserName (Get-LinuxUserName)
+                $expectedUser = if ($linuxUser) { $linuxUser } else { Get-LinuxUserName }
+                Assert-DefaultUser -UserName $expectedUser
                 # Informational only: the registry value is unreliable for .wsl images (W16).
                 Write-Host "     registry DefaultUid: $($record.DefaultUid)"
             }))
@@ -164,4 +170,47 @@ function Invoke-VerifyStage {
     return 'done'
 }
 
-Export-ModuleMember -Function Invoke-VerifyStage, Invoke-VerifyChecks
+function Invoke-VerifyCommand {
+    <#
+    .SYNOPSIS
+        The body of script/verify.ps1: resolves the operator's choices, runs the checks, returns the exit code.
+    .DESCRIPTION
+        A flag given explicitly wins; otherwise the value persisted by setup.ps1
+        is used (ADR-015); otherwise the default. Read-only: nothing is persisted.
+    .PARAMETER DistroRoot
+        Root directory for WSL distributions.
+    .PARAMETER Profiles
+        Comma-separated profiles; decides whether Hyper-V is expected.
+    .PARAMETER LinuxUser
+        The expected default user of dev.
+    .OUTPUTS
+        0 when every check passed, 1 otherwise.
+    #>
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [string]$DistroRoot,
+        [string]$Profiles,
+        [string]$LinuxUser
+    )
+    $bound = $PSBoundParameters
+    $profileText = Resolve-SetupSetting -Name 'profiles' -Value $Profiles -Explicit:($bound.ContainsKey('Profiles')) -Default 'core'
+    $profileList = @($profileText -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+    if ('core' -notin $profileList) { $profileList = @('core') + $profileList }
+    $context = @{
+        Profiles = $profileList
+        DistroRoot = Resolve-SetupSetting -Name 'distroRoot' -Value $DistroRoot -Explicit:($bound.ContainsKey('DistroRoot')) -Default 'D:\WSL'
+        LinuxUser = Resolve-SetupSetting -Name 'linuxUser' -Value $LinuxUser -Explicit:($bound.ContainsKey('LinuxUser'))
+        Edition = Get-EditionInfo
+    }
+    $results = @(Invoke-VerifyChecks -Context $context)
+    $failed = @($results | Where-Object { -not $_.Ok })
+    if ($failed.Count -gt 0) {
+        Write-Host "$($failed.Count) of $($results.Count) checks failed."
+        return 1
+    }
+    Write-Host "All $($results.Count) checks passed."
+    return 0
+}
+
+Export-ModuleMember -Function Invoke-VerifyStage, Invoke-VerifyChecks, Invoke-VerifyCommand

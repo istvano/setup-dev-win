@@ -6,6 +6,9 @@ $PSNativeCommandUseErrorActionPreference = $true
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Common.psm1') -Force
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Distro.psm1') -Force
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Handoff.psm1') -Force
+# No -Force: the runner has already loaded State, and reloading it would split the
+# module in two (mocks and callers would see different instances).
+Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/State.psm1')
 
 function Test-DevPasswordNeeded {
     # Internal. True when the user's password is locked (L), empty (NP) or cannot be
@@ -34,8 +37,11 @@ function Invoke-WslStage {
         Install-DevDistro returns early when dev already exists, so the default user
         is asserted on every run; the password is set whenever passwd -S reports it locked. The
         handoff is interactive (the Linux bootstrap prompts for the git identity).
+        The Linux user is Context.LinuxUser when set; otherwise it is derived from
+        the Windows user name and persisted, so later runs and verify use the same
+        name (ADR-015).
     .PARAMETER Context
-        Run context: Profiles, DistroRoot, LinuxRepoUrl, LinuxRef, Plan, Edition.
+        Run context: Profiles, DistroRoot, LinuxUser, LinuxRepoUrl, LinuxRef, Plan, Edition.
     .PARAMETER Plan
         Describe what would change; change nothing.
     .OUTPUTS
@@ -47,6 +53,7 @@ function Invoke-WslStage {
         [Parameter(Mandatory)][hashtable]$Context,
         [switch]$Plan
     )
+    $chosenUser = if ($Context.ContainsKey('LinuxUser')) { [string]$Context.LinuxUser } else { '' }
     if (-not (Test-LinuxRepoUrl -Url ([string]$Context.LinuxRepoUrl))) {
         Write-Warn "Invalid LinuxRepoUrl '$($Context.LinuxRepoUrl)': expected https://github.com/<owner>/<repo>[.git]."
         return 'failed'
@@ -57,7 +64,8 @@ function Invoke-WslStage {
     }
     if ($Plan) {
         Write-Info 'Would read the pinned distro lock and download the image to %TEMP%\setup-dev-win, verifying its SHA256.'
-        Write-Info "Would install it as distro dev under $($Context.DistroRoot)\dev (skipped when dev exists) and verify placement and the default user."
+        $who = if ($chosenUser) { $chosenUser } else { 'derived from the Windows user name' }
+        Write-Info "Would install it as distro dev under $($Context.DistroRoot)\dev with Linux user $who (skipped when dev exists) and verify placement and the default user."
         Write-Info 'Would set the Linux user password with passwd when it is still locked.'
         Write-Info "Would clone $($Context.LinuxRepoUrl) at $($Context.LinuxRef) inside dev and run: ./bootstrap apply --target wsl (interactive)."
         return 'done'
@@ -65,10 +73,18 @@ function Invoke-WslStage {
     try {
         $lock = Get-DistroLock
         $image = Save-VerifiedImage -Lock $lock -Directory (Join-Path ([System.IO.Path]::GetTempPath()) 'setup-dev-win')
-        $userName = Get-LinuxUserName
+        if ($chosenUser) { $userName = Get-LinuxUserName -Override $chosenUser }
+        else {
+            $userName = Get-LinuxUserName
+            Set-SetupSetting -Name 'linuxUser' -Value $userName
+        }
+        Write-Info "Linux user: $userName"
         $record = Install-DevDistro -ImagePath $image -Root $Context.DistroRoot -UserName $userName
         Assert-DistroPlacement -Distro $record -Root $Context.DistroRoot
-        Assert-DefaultUser -UserName $userName
+        # Install-DevDistro returns early for an existing dev, so on a re-run this is
+        # the first check of the user and the recovery hint is added here.
+        try { Assert-DefaultUser -UserName $userName }
+        catch { throw "$($_.Exception.Message) $(Get-DistroRecoveryHint)" }
         if (Test-DevPasswordNeeded -UserName $userName) { Set-DevUserPassword -UserName $userName }
         $code = Invoke-LinuxHandoff -Url $Context.LinuxRepoUrl -Ref $Context.LinuxRef
     }

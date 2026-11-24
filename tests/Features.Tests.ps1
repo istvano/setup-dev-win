@@ -227,6 +227,16 @@ Describe 'Invoke-FeaturesStage' {
         Should-Invoke -ModuleName Features -CommandName Write-Warn
     }
 
+    It 'fails for lab on Home, even with -Plan, without elevating' {
+        Initialize-Stage -States @('Disabled')
+        $homeCtx = @{ Profiles = @('core', 'lab'); Plan = $false; Edition = @{ Edition = 'Core'; IsHome = $true; IsPro = $false } }
+        Invoke-FeaturesStage -Context $homeCtx | Should-Be 'failed'
+        Invoke-FeaturesStage -Context $homeCtx -Plan | Should-Be 'failed'
+        Should-NotInvoke -ModuleName Features -CommandName Invoke-ElevatedScript
+        Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
+        Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*lab profile needs Windows 11 Pro*' }
+    }
+
     It 'plan prints what it would do and neither elevates nor installs' {
         Initialize-Stage -States @('Disabled') -Wsl $null
         Invoke-FeaturesStage -Context (Get-Ctx) -Plan | Should-Be 'done'

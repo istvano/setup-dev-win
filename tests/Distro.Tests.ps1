@@ -122,11 +122,11 @@ Describe 'Get-LinuxUserName' {
     }
     It 'throws asking for -LinuxUser when the name sanitises to empty' {
         $saved = $env:USERNAME
-        try { $env:USERNAME = '...'; { Get-LinuxUserName } | Should-Throw -ExceptionMessage '*-LinuxUser*' }
+        try { $env:USERNAME = '...'; { Get-LinuxUserName } | Should-Throw -ExceptionMessage '*pwsh -File script\setup.ps1 -LinuxUser <name>*' }
         finally { $env:USERNAME = $saved }
     }
     It 'rejects root, reserved and systemd- names' -ForEach @('root', 'nobody', 'sshd', 'systemd-foo') {
-        { Get-LinuxUserName -Override $_ } | Should-Throw -ExceptionMessage '*reserved*-LinuxUser*'
+        { Get-LinuxUserName -Override $_ } | Should-Throw -ExceptionMessage '*reserved*script\setup.ps1 -LinuxUser <name>*'
     }
     It 'rejects a trailing newline' {
         { Get-LinuxUserName -Override "alice`n" } | Should-Throw -ExceptionMessage '*-LinuxUser*'
