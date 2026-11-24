@@ -125,6 +125,12 @@ Describe 'Get-LinuxUserName' {
         try { $env:USERNAME = '...'; { Get-LinuxUserName } | Should-Throw -ExceptionMessage '*-LinuxUser*' }
         finally { $env:USERNAME = $saved }
     }
+    It 'rejects root, reserved and systemd- names' -ForEach @('root', 'nobody', 'sshd', 'systemd-foo') {
+        { Get-LinuxUserName -Override $_ } | Should-Throw -ExceptionMessage '*reserved*-LinuxUser*'
+    }
+    It 'rejects a trailing newline' {
+        { Get-LinuxUserName -Override "alice`n" } | Should-Throw -ExceptionMessage '*-LinuxUser*'
+    }
     It 'throws for an invalid override' {
         { Get-LinuxUserName -Override '1abc' } | Should-Throw -ExceptionMessage '*-LinuxUser*'
         { Get-LinuxUserName -Override 'a b; rm' } | Should-Throw -ExceptionMessage '*-LinuxUser*'
@@ -150,6 +156,11 @@ Describe 'New-CloudInitUserData' {
         ($text -match 'systemd=true') | Should-BeTrue
         ($text -match 'path: /etc/wsl.conf') | Should-BeTrue
         ($text -match '__USER__') | Should-BeFalse
+    }
+    It 'starts the appended wsl.conf content with an empty line' {
+        New-CloudInitUserData -UserName 'alice' -Path $script:Out
+        $text = Get-Content -LiteralPath $script:Out -Raw
+        ($text -match "content: \|\n\n      \[boot\]\n      systemd=true\n      \[user\]\n      default=alice\n?") | Should-BeTrue
     }
     It 'has the expected structure (line matching, no YAML module in CI)' {
         New-CloudInitUserData -UserName 'alice' -Path $script:Out
@@ -211,6 +222,8 @@ Describe 'Install-DevDistro' {
         $script:UserDataSeen = $null
         $script:Registered = $null
         $script:CloudExit = 0
+        $script:IdUser = 'alice'
+        $script:IdUid = '1000'
         Mock -ModuleName Distro Get-RegisteredDistro {
             if ($script:Registered) { $script:Registered }
             elseif ($script:Calls.Count -gt 0) { @{ Name = 'dev'; BasePath = 'D:\WSL\dev'; Version = 2; DefaultUid = 1000 } }
@@ -224,6 +237,8 @@ Describe 'Install-DevDistro' {
         Mock -ModuleName Distro Invoke-Native {
             $script:Calls.Add(($ArgumentList -join ' '))
             if ($ArgumentList -contains 'cloud-init') { [pscustomobject]@{ ExitCode = $script:CloudExit; Output = @('status: done') } }
+            elseif ($ArgumentList -contains '-un') { [pscustomobject]@{ ExitCode = 0; Output = @($script:IdUser) } }
+            elseif ($ArgumentList -contains '-u') { [pscustomobject]@{ ExitCode = 0; Output = @($script:IdUid) } }
             else { [pscustomobject]@{ ExitCode = 0; Output = @() } }
         }
     }
@@ -242,10 +257,13 @@ Describe 'Install-DevDistro' {
     }
     It 'calls wsl in order: install, cloud-init wait, terminate' {
         Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
-        $script:Calls.Count | Should-Be 3
+        $script:Calls.Count | Should-Be 6
         $script:Calls[0] | Should-Be 'install --install --from-file C:\i.wsl --name dev --location D:\WSL\dev --no-launch'
         $script:Calls[1] | Should-Be '-d dev -u root -- cloud-init status --wait'
         $script:Calls[2] | Should-Be '--terminate dev'
+        $script:Calls[3] | Should-Be '--manage dev --set-default-user alice'
+        $script:Calls[4] | Should-Be '-d dev -- id -un'
+        $script:Calls[5] | Should-Be '-d dev -- id -u'
     }
     It 'writes user-data before the install and deletes it after' {
         Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
@@ -257,14 +275,51 @@ Describe 'Install-DevDistro' {
         @($r).Count | Should-Be 1
         $r.Name | Should-Be 'dev'
     }
-    It 'accepts cloud-init exit code 2' {
+    It 'accepts cloud-init exit code 2 with a warning and still terminates' {
         $script:CloudExit = 2
+        Mock -ModuleName Distro Write-Warn { }
         Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
+        Should-Invoke -CommandName Write-Warn -ModuleName Distro -Times 1 -ParameterFilter { $Message -like '*recoverable*' }
+        $script:Calls -contains '--terminate dev' | Should-BeTrue
+    }
+    It 'warns and continues when --set-default-user is not accepted' {
+        Mock -ModuleName Distro Write-Warn { }
+        Mock -ModuleName Distro Invoke-Native {
+            $script:Calls.Add(($ArgumentList -join ' '))
+            if ($ArgumentList -contains '--set-default-user') { [pscustomobject]@{ ExitCode = 1; Output = @('usage') } }
+            elseif ($ArgumentList -contains '-un') { [pscustomobject]@{ ExitCode = 0; Output = @('alice') } }
+            elseif ($ArgumentList -contains '-u') { [pscustomobject]@{ ExitCode = 0; Output = @('1000') } }
+            else { [pscustomobject]@{ ExitCode = 0; Output = @() } }
+        }
+        Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
+        Should-Invoke -CommandName Write-Warn -ModuleName Distro -ParameterFilter { $Message -like '*set-default-user*' }
+    }
+    It 'fails with the recovery hint when the effective user is wrong' {
+        $script:IdUser = 'root'
+        { Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' } |
+            Should-Throw -ExceptionMessage "*starts as 'root', expected 'alice'*wsl --unregister dev*setup.ps1 -Stage wsl*"
+        Test-Path -LiteralPath (Join-Path $script:HomeDir '.cloud-init\dev.user-data') | Should-BeFalse
+    }
+    It 'names the missing registry record after a successful install' {
+        Mock -ModuleName Distro Get-RegisteredDistro { }
+        { Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' } |
+            Should-Throw -ExceptionMessage '*dev was installed but no registry record was found*wsl --unregister dev*'
+    }
+    It 'backs up an existing user-data file first' {
+        $dir = Join-Path $script:HomeDir '.cloud-init'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        Set-Content -LiteralPath (Join-Path $dir 'dev.user-data') -Value 'old'
+        Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
+        $backups = @(Get-ChildItem -LiteralPath $dir -Filter 'dev.user-data.backup.*')
+        $backups.Count | Should-Be 1
+        ($backups[0].Name -match '^dev\.user-data\.backup\.\d{8}T\d{6}Z$') | Should-BeTrue
+        (Get-Content -LiteralPath $backups[0].FullName -Raw).Trim() | Should-Be 'old'
+        Test-Path -LiteralPath (Join-Path $dir 'dev.user-data') | Should-BeFalse
     }
     It 'throws on another cloud-init code, prints output, and still deletes user-data' {
         $script:CloudExit = 1
         { Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' } |
-            Should-Throw -ExceptionMessage '*cloud-init*1*status: done*'
+            Should-Throw -ExceptionMessage '*cloud-init*1*status: done*wsl --unregister dev*'
         Test-Path -LiteralPath (Join-Path $script:HomeDir '.cloud-init\dev.user-data') | Should-BeFalse
     }
     It 'throws with the code when wsl --install fails and deletes user-data' {
@@ -293,6 +348,19 @@ Describe 'Set-DevUserPassword' {
         Should-Invoke -CommandName Write-Warn -ModuleName Distro -Times 1 -ParameterFilter {
             $Message -like '*wsl -d dev -u root -- passwd alice*' }
     }
+    It 'Invoke-DistroInteractive returns exactly one int from the process exit code' {
+        $fake = [pscustomobject]@{ Handle = [IntPtr]::Zero; ExitCode = 0 }
+        $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { }
+        Mock -ModuleName Distro Start-Process { $fake }
+        $r = & (Get-Module Distro) { Invoke-DistroInteractive -ArgumentList '-d', 'dev', '--', 'passwd', 'alice' }
+        @($r).Count | Should-Be 1
+        ($r -is [int]) | Should-BeTrue
+        Should-Invoke -CommandName Start-Process -ModuleName Distro -Times 1 -ParameterFilter {
+            $FilePath -eq 'wsl.exe' -and $ArgumentList -eq '-d dev -- passwd alice' -and $NoNewWindow -and $PassThru -and -not $Wait }
+    }
+    It 'rejects a reserved user name' {
+        { Set-DevUserPassword -UserName 'root' } | Should-Throw -ExceptionMessage '*reserved*'
+    }
     It 'throws when passwd fails' {
         Mock -ModuleName Distro Test-InteractiveSession { $true }
         Mock -ModuleName Distro Invoke-DistroInteractive { 10 }
@@ -318,18 +386,46 @@ Describe 'Assert-DistroPlacement' {
         { Assert-DistroPlacement -Distro @{ BasePath = 'D:\WSL\dev'; Version = 1; DefaultUid = 1000 } -Root 'D:\WSL' } |
             Should-Throw -ExceptionMessage '*WSL 2*'
     }
-    It 'throws for DefaultUid 0' {
-        { Assert-DistroPlacement -Distro @{ BasePath = 'D:\WSL\dev'; Version = 2; DefaultUid = 0 } -Root 'D:\WSL' } |
-            Should-Throw -ExceptionMessage '*root*'
+    It 'does not fail on registry DefaultUid 0 alone' {
+        & { Assert-DistroPlacement -Distro @{ BasePath = 'D:\WSL\dev'; Version = 2; DefaultUid = 0 } -Root 'D:\WSL' }
+    }
+    It 'uses the normalised root in the message' {
+        $d = @{ BasePath = 'C:\x'; Version = 2; DefaultUid = 1000 }
+        { Assert-DistroPlacement -Distro $d -Root 'D:\WSL\' } | Should-Throw -ExceptionMessage `
+            'dev is at C:\x, not under D:\WSL. Move it with: wsl --shutdown; wsl --manage dev --move D:\WSL\dev'
     }
 }
 
 Describe 'wsl output parsing' {
     It 'Invoke-Native sets WSL_UTF8 for wsl.exe' {
-        $env:WSL_UTF8 = $null
-        # A real executable named wsl is not needed: the variable is set before the call.
-        Import-Module (Join-Path $script:Root 'script/lib/Common.psm1') -Force
-        { Invoke-Native -FilePath '/nonexistent/wsl.exe' } | Should-Throw
-        $env:WSL_UTF8 | Should-Be '1'
+        $saved = $env:WSL_UTF8
+        try {
+            $env:WSL_UTF8 = $null
+            # No such executable: the variable is set before the call, the call throws.
+            { & (Get-Module Distro) { Invoke-Native -FilePath '/nonexistent/wsl.exe' } } | Should-Throw
+            $env:WSL_UTF8 | Should-Be '1'
+        }
+        finally { $env:WSL_UTF8 = $saved }
+    }
+}
+
+Describe 'Assert-DefaultUser' {
+    It 'throws when the effective user differs' {
+        Mock -ModuleName Distro Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @('root') } }
+        { Assert-DefaultUser -UserName 'alice' } | Should-Throw -ExceptionMessage "*'root'*'alice'*"
+    }
+    It 'throws when the uid is below 1000' {
+        Mock -ModuleName Distro Invoke-Native {
+            if ($ArgumentList -contains '-un') { [pscustomobject]@{ ExitCode = 0; Output = @('alice') } }
+            else { [pscustomobject]@{ ExitCode = 0; Output = @('999') } }
+        }
+        { Assert-DefaultUser -UserName 'alice' } | Should-Throw -ExceptionMessage '*>= 1000*'
+    }
+    It 'throws when the uid is not an integer' {
+        Mock -ModuleName Distro Invoke-Native {
+            if ($ArgumentList -contains '-un') { [pscustomobject]@{ ExitCode = 0; Output = @('alice') } }
+            else { [pscustomobject]@{ ExitCode = 0; Output = @('abc') } }
+        }
+        { Assert-DefaultUser -UserName 'alice' } | Should-Throw -ExceptionMessage '*>= 1000*'
     }
 }

@@ -108,7 +108,22 @@ function Save-VerifiedImage {
 
 # Name of the distro this repository owns, and the user-data file cloud-init reads.
 $script:DistroName = 'dev'
-$script:LinuxUserPattern = '^[a-z_][a-z0-9_-]{0,31}$'
+$script:LinuxUserPattern = '^[a-z_][a-z0-9_-]{0,31}\z'
+$script:ReservedUserNames = @('root', 'daemon', 'bin', 'sys', 'sync', 'games', 'man', 'lp', 'mail', 'news', 'uucp',
+    'proxy', 'www-data', 'backup', 'list', 'irc', 'nobody', 'systemd-network', 'systemd-resolve', 'messagebus',
+    'sshd', 'syslog')
+$script:RecoveryHint = 'To retry: wsl --unregister dev, then re-run script\setup.ps1 -Stage wsl.'
+
+function Assert-LinuxUserName {
+    # Internal. Throws unless Name is a valid, non-reserved Linux login name.
+    param([string]$Name)
+    if ($Name -cnotmatch $script:LinuxUserPattern) {
+        throw "Cannot use '$Name' as a Linux user name (must match $script:LinuxUserPattern). Pass -LinuxUser <name>."
+    }
+    if ($Name -in $script:ReservedUserNames -or $Name.StartsWith('systemd-', [System.StringComparison]::Ordinal)) {
+        throw "Cannot use '$Name' as the Linux user: it is a reserved system name. Pass -LinuxUser <name>."
+    }
+}
 
 function Get-LinuxUserName {
     <#
@@ -126,9 +141,7 @@ function Get-LinuxUserName {
 
     if (-not [string]::IsNullOrEmpty($Override)) { $name = $Override }
     else { $name = ([string]$env:USERNAME).ToLowerInvariant() -replace '[^a-z0-9_-]', '' }
-    if ($name -cnotmatch $script:LinuxUserPattern) {
-        throw "Cannot use '$name' as a Linux user name (must match $script:LinuxUserPattern). Pass -LinuxUser <name>."
-    }
+    Assert-LinuxUserName -Name $name
     $name
 }
 
@@ -145,9 +158,7 @@ function New-CloudInitUserData {
         [Parameter(Mandatory)][string]$UserName,
         [Parameter(Mandatory)][string]$Path
     )
-    if ($UserName -cnotmatch $script:LinuxUserPattern) {
-        throw "Cannot use '$UserName' as a Linux user name (must match $script:LinuxUserPattern). Pass -LinuxUser <name>."
-    }
+    Assert-LinuxUserName -Name $UserName
     if (-not $PSCmdlet.ShouldProcess($Path, 'write cloud-init user-data')) { return }
     $template = Join-Path (Get-RepoRoot) 'wsl/user-data.template.yaml'
     $text = ([System.IO.File]::ReadAllText($template) -replace "`r`n", "`n").Replace('__USER__', $UserName)
@@ -214,18 +225,18 @@ function Invoke-DistroInstall {
 }
 
 function Invoke-DistroInteractive {
-    # Internal, mockable. Runs wsl.exe attached to the console (no capture) so the
-    # operator can answer prompts; returns the exit code.
+    # Internal, mockable. Runs wsl.exe attached to the console so the operator can
+    # answer prompts, and returns the exit code as exactly one [int]. Start-Process
+    # -NoNewWindow keeps the console; a plain call would capture stdout into the
+    # return value. -Wait is avoided: it waits for all descendants. Reading Handle
+    # once keeps the exit code available after exit. Arguments are validated names.
     [CmdletBinding()]
     [OutputType([int])]
     param([Parameter(Mandatory)][string[]]$ArgumentList)
-    $previous = $PSNativeCommandUseErrorActionPreference
-    $PSNativeCommandUseErrorActionPreference = $false
-    try {
-        & wsl.exe @ArgumentList
-        return [int]$LASTEXITCODE
-    }
-    finally { $PSNativeCommandUseErrorActionPreference = $previous }
+    $p = Start-Process -FilePath 'wsl.exe' -ArgumentList ($ArgumentList -join ' ') -NoNewWindow -PassThru
+    $null = $p.Handle
+    $p.WaitForExit()
+    return [int]$p.ExitCode
 }
 
 function Test-InteractiveSession {
@@ -259,28 +270,76 @@ function Install-DevDistro {
     $existing = Get-RegisteredDistro -Name $script:DistroName
     if ($existing) { return $existing }
 
+    Assert-LinuxUserName -Name $UserName
     $userData = Join-Path (Join-Path $env:USERPROFILE '.cloud-init') 'dev.user-data'
+    if (Test-Path -LiteralPath $userData) {
+        $backup = "$userData.backup.$([datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))"
+        Move-Item -LiteralPath $userData -Destination $backup -Force
+        Write-Info "Existing user-data backed up to $backup"
+    }
     New-CloudInitUserData -UserName $UserName -Path $userData
+    $installed = $false
     try {
         $location = "$($Root.TrimEnd('\'))\$script:DistroName"
         $code = Invoke-DistroInstall -ArgumentList @('--install', '--from-file', $ImagePath,
             '--name', $script:DistroName, '--location', $location, '--no-launch')
         if ($code -ne 0) { throw "wsl --install exited with code $code." }
+        $installed = $true
 
         # Exit 2 = done with recoverable errors. [verify on real machine, Task 13]
         $wait = Invoke-Native -FilePath 'wsl.exe' -AllowExitCode (1..255) -ArgumentList @(
             '-d', $script:DistroName, '-u', 'root', '--', 'cloud-init', 'status', '--wait')
         if ($wait.ExitCode -notin 0, 2) {
-            throw "cloud-init status --wait exited with code $($wait.ExitCode): $($wait.Output -join [Environment]::NewLine)"
+            throw "cloud-init status --wait exited with code $($wait.ExitCode): $($wait.Output -join [Environment]::NewLine) $script:RecoveryHint"
         }
         if ($wait.ExitCode -eq 2) { Write-Warn 'cloud-init finished with recoverable errors; check /var/log/cloud-init.log in dev.' }
 
         Invoke-Native -FilePath 'wsl.exe' -ArgumentList @('--terminate', $script:DistroName) | Out-Null
+
+        # wsl.conf [user] default is not written back to the registry DefaultUid, and
+        # .wsl images only update it after OOBE on a first interactive shell.
+        # [verify on real machine, Task 13] that --set-default-user exists for .wsl distros.
+        $set = Invoke-Native -FilePath 'wsl.exe' -AllowExitCode (1..255) -ArgumentList @(
+            '--manage', $script:DistroName, '--set-default-user', $UserName)
+        if ($set.ExitCode -ne 0) {
+            Write-Warn "wsl --manage dev --set-default-user was not accepted (exit $($set.ExitCode)); relying on wsl.conf."
+        }
+        Assert-DefaultUser -UserName $UserName
+    }
+    catch {
+        if ($installed) { throw "$($_.Exception.Message) $script:RecoveryHint" }
+        throw
     }
     finally {
         Remove-Item -LiteralPath $userData -Force -ErrorAction SilentlyContinue
     }
-    Get-RegisteredDistro -Name $script:DistroName
+    $record = Get-RegisteredDistro -Name $script:DistroName
+    if (-not $record) { throw "dev was installed but no registry record was found. $script:RecoveryHint" }
+    Write-Info "dev registry DefaultUid=$($record.DefaultUid) (diagnostic only)"
+    $record
+}
+
+function Assert-DefaultUser {
+    <#
+    .SYNOPSIS
+        Throws unless the effective default user of dev is UserName with a uid >= 1000.
+    .DESCRIPTION
+        Asks the distro itself (id -un, id -u), because the registry DefaultUid is
+        unreliable for .wsl images before the first interactive shell.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$UserName)
+    $who = Invoke-Native -FilePath 'wsl.exe' -ArgumentList @('-d', $script:DistroName, '--', 'id', '-un')
+    $actual = (($who.Output -join '').Trim())
+    if ($actual -ne $UserName) {
+        throw "dev starts as '$actual', expected '$UserName': the cloud-init user was not applied as the default user."
+    }
+    $uidOut = Invoke-Native -FilePath 'wsl.exe' -ArgumentList @('-d', $script:DistroName, '--', 'id', '-u')
+    $uidText = (($uidOut.Output -join '').Trim())
+    $uid = 0
+    if (-not [int]::TryParse($uidText, [ref]$uid) -or $uid -lt 1000) {
+        throw "dev default user '$UserName' has uid '$uidText'; expected an integer >= 1000."
+    }
 }
 
 function Set-DevUserPassword {
@@ -293,7 +352,7 @@ function Set-DevUserPassword {
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory)][string]$UserName)
-    if ($UserName -cnotmatch $script:LinuxUserPattern) { throw "Invalid Linux user name '$UserName'." }
+    Assert-LinuxUserName -Name $UserName
     $wslArgs = @('-d', $script:DistroName, '-u', 'root', '--', 'passwd', $UserName)
     if (-not (Test-InteractiveSession)) {
         Write-Warn "Not interactive: set the password later with: wsl -d $($script:DistroName) -u root -- passwd $UserName"
@@ -307,7 +366,10 @@ function Set-DevUserPassword {
 function Assert-DistroPlacement {
     <#
     .SYNOPSIS
-        Throws unless the dev distro lives under Root, is WSL 2 and does not default to root.
+        Throws unless the dev distro lives under Root and is WSL 2.
+    .DESCRIPTION
+        The default user is checked by Assert-DefaultUser, not here: the registry
+        DefaultUid is not reliable for .wsl images.
     #>
     [CmdletBinding()]
     param(
@@ -317,11 +379,10 @@ function Assert-DistroPlacement {
     $base = ConvertTo-PlainPath ([string]$Distro.BasePath)
     $rootPlain = ConvertTo-PlainPath $Root
     if (-not $base.StartsWith("$rootPlain\", [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "dev is at $($Distro.BasePath), not under $Root. Move it with: wsl --shutdown; wsl --manage dev --move $Root\dev"
+        throw "dev is at $($Distro.BasePath), not under $rootPlain. Move it with: wsl --shutdown; wsl --manage dev --move $rootPlain\dev"
     }
     if ([int]$Distro.Version -ne 2) { throw "dev is WSL version $($Distro.Version); it must be WSL 2." }
-    if ([int]$Distro.DefaultUid -eq 0) { throw 'dev defaults to root (DefaultUid 0); the cloud-init user was not applied.' }
 }
 
 Export-ModuleMember -Function Get-DistroLock, Save-VerifiedImage, Get-LinuxUserName, New-CloudInitUserData,
-Get-RegisteredDistro, Install-DevDistro, Set-DevUserPassword, Assert-DistroPlacement
+Get-RegisteredDistro, Install-DevDistro, Set-DevUserPassword, Assert-DistroPlacement, Assert-DefaultUser

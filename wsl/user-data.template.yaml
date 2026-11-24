@@ -10,7 +10,11 @@ users:
 write_files:
   - path: /etc/wsl.conf
     append: true
+    # The content starts with an empty line so it cannot glue onto a final line
+    # without a newline. [boot] systemd=true is required by the Linux repo; a
+    # duplicate [boot] section with the same value is harmless if one exists.
     content: |
+
       [boot]
       systemd=true
       [user]
