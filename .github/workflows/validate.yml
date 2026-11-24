@@ -40,6 +40,19 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $dir
       - name: Gate
         run: pwsh -NoLogo -NoProfile -File script/test.ps1 -RequireLinters
+      # Stage-0 runs on the Windows PowerShell 5.1 that ships with Windows, so its
+      # tests run there too (W8). Pester is installed for 5.1 separately: the
+      # modules above went to the PowerShell 7 CurrentUser path.
+      - name: Stage-0 tests under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $v = Import-PowerShellDataFile -Path tests/tool-versions.psd1
+          Install-Module -Name Pester -RequiredVersion $v.Pester -Force -SkipPublisherCheck -Scope CurrentUser
+          Import-Module -Name Pester -RequiredVersion $v.Pester -Force
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'tests/Bootstrap.Tests.ps1'
+          $config.Run.Exit = $true
+          Invoke-Pester -Configuration $config
 
   static:
     runs-on: ubuntu-24.04

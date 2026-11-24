@@ -57,6 +57,17 @@ if ($havePsa) {
         if ($results.Count -gt 0) { $failed = $true }
     }
 
+    # Stage-0 also has to be valid Windows PowerShell 5.1 (compatibility rules).
+    $stage0 = Join-Path $root 'bootstrap.ps1'
+    if (Test-Path -LiteralPath $stage0) {
+        $results = @(Invoke-ScriptAnalyzer -Path $stage0 -Settings (Join-Path $root 'PSScriptAnalyzerSettings.Stage0.psd1') |
+                Where-Object Severity -In 'Error', 'Warning')
+        foreach ($r in $results) {
+            Write-Host ('{0}:{1} [{2}] {3}' -f $r.ScriptName, $r.Line, $r.RuleName, $r.Message)
+        }
+        if ($results.Count -gt 0) { $failed = $true }
+    }
+
     Write-Host '== Formatting (Invoke-Formatter)'
     $files = foreach ($target in $targets) {
         if ((Get-Item -LiteralPath $target).PSIsContainer) {
