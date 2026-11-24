@@ -81,6 +81,10 @@ Describe 'Enable-Features.ps1' {
         . $script:ElevatedScript
     }
     AfterAll { Remove-Item Env:\SETUP_DEV_WIN_NO_MAIN -ErrorAction SilentlyContinue }
+    BeforeEach {
+        # The dot-sourced script reads this; point it at a fresh file per test.
+        $script:ElevatedLogPath = Join-Path $TestDrive "elevated-$([guid]::NewGuid().ToString('N')).log"
+    }
 
     It 'refuses Containers-DisposableClientVM without calling Enable-WindowsOptionalFeature' {
         Mock Enable-WindowsOptionalFeature { [pscustomobject]@{ RestartNeeded = $false } }
@@ -126,15 +130,40 @@ Describe 'Enable-Features.ps1' {
         Should-Invoke Write-Host -ParameterFilter { $Object -like '*needs a restart*' }
     }
 
-    It 'run as a script, exits non-zero for a refused name' {
+    It 'writes [fail] lines to elevated.log with a timestamp, and not [info] lines' {
+        Mock Enable-WindowsOptionalFeature { [pscustomobject]@{ RestartNeeded = $false } }
+        Mock Write-Host {}
+        Invoke-ElevatedMain -Name @('Containers-DisposableClientVM') | Should-Be 2
+        Invoke-ElevatedMain -Name @('VirtualMachinePlatform') | Should-Be 0
+        $lines = @(Get-Content -LiteralPath $script:ElevatedLogPath)
+        $lines.Count | Should-Be 1
+        $lines[0] | Should-MatchString '^\d{4}-\d\d-\d\dT\S+ \[fail\] Refusing feature .Containers-DisposableClientVM.'
+    }
+
+    It 'logs the pending-restart warning and the failure, appending to earlier lines' {
+        Set-Content -LiteralPath $script:ElevatedLogPath -Value 'earlier line'
+        Mock Enable-WindowsOptionalFeature { if ($FeatureName -eq 'VirtualMachinePlatform') { [pscustomobject]@{ RestartNeeded = $true } } else { throw 'boom' } }
+        Mock Write-Host {}
+        Invoke-ElevatedMain -Name @('VirtualMachinePlatform,Microsoft-Hyper-V-All') | Should-Be 1
+        $lines = @(Get-Content -LiteralPath $script:ElevatedLogPath)
+        $lines[0] | Should-Be 'earlier line'
+        $lines[1] | Should-BeLikeString '* `[warn`] *needs a restart*'
+        $lines[2] | Should-BeLikeString '* `[fail`] boom'
+    }
+
+    It 'run as a script, exits non-zero for a refused name and logs it under LOCALAPPDATA' {
         $pwsh = [Environment]::ProcessPath
+        $local = Join-Path $TestDrive 'child-local'
+        $savedLocal = $env:LOCALAPPDATA
         # The child must run main, so the NO_MAIN guard set for dot-sourcing is cleared for it.
         Remove-Item Env:\SETUP_DEV_WIN_NO_MAIN
+        $env:LOCALAPPDATA = $local
         $PSNativeCommandUseErrorActionPreference = $false
         try { $output = & $pwsh -NoLogo -NoProfile -File $script:ElevatedScript -Name 'Containers-DisposableClientVM' 2>&1 }
-        finally { $env:SETUP_DEV_WIN_NO_MAIN = '1' }
+        finally { $env:SETUP_DEV_WIN_NO_MAIN = '1'; $env:LOCALAPPDATA = $savedLocal }
         $LASTEXITCODE | Should-Be 2
         ($output -join ' ') | Should-BeLikeString '*Refusing feature*'
+        (Get-Content -LiteralPath (Join-Path $local 'setup-dev-win/elevated.log') -Raw) | Should-BeLikeString '*`[fail`] Refusing feature*'
     }
 }
 
@@ -153,6 +182,7 @@ Describe 'Invoke-FeaturesStage' {
             Mock -ModuleName Features Get-WslVersion { $Wsl }.GetNewClosure()
             Mock -ModuleName Features Invoke-ElevatedScript { $ElevatedExit }.GetNewClosure()
             Mock -ModuleName Features Invoke-WslCommand { 0 }
+            Mock -ModuleName Features Get-ElevatedLogPath { $null }
             Mock -ModuleName Features Write-Info {}
             Mock -ModuleName Features Write-Ok {}
             Mock -ModuleName Features Write-Warn {}
@@ -184,6 +214,18 @@ Describe 'Invoke-FeaturesStage' {
         Initialize-Stage -States @('Disabled') -ElevatedExit 1
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'failed'
         Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
+    }
+
+    It 'after a failed elevated run prints only the new elevated.log lines' {
+        Initialize-Stage -States @('Disabled')
+        $log = Join-Path $TestDrive "stage-elevated-$([guid]::NewGuid().ToString('N')).log"
+        Set-Content -LiteralPath $log -Value '2026-01-01T00:00:00Z [fail] old failure'
+        Mock -ModuleName Features Get-ElevatedLogPath { $log }.GetNewClosure()
+        Mock -ModuleName Features Invoke-ElevatedScript { Add-Content -LiteralPath $log -Value '2026-11-24T00:00:00Z [fail] new failure'; 1 }.GetNewClosure()
+        Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'failed'
+        Should-Invoke -ModuleName Features -CommandName Write-Warn -Times 1 -Exactly -ParameterFilter { $Message -like '*new failure*' }
+        Should-NotInvoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*old failure*' }
+        Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like "*failed while enabling*log: $log*" }
     }
 
     It 'fails with a warning when UAC is declined' {

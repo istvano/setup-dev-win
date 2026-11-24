@@ -22,6 +22,26 @@ function Invoke-WslCommand {
     finally { $PSNativeCommandUseErrorActionPreference = $previous }
 }
 
+function Get-ElevatedLogPath {
+    # Internal, mockable. Where script/elevated/Enable-Features.ps1 appends its
+    # [warn]/[fail] lines; the same expression lives in that script, which imports
+    # nothing. $null when LOCALAPPDATA is not set.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    if (-not $env:LOCALAPPDATA) { return $null }
+    return (Join-Path $env:LOCALAPPDATA (Join-Path 'setup-dev-win' 'elevated.log'))
+}
+
+function Get-LogLineCount {
+    # Internal. Number of lines in the file; 0 when it does not exist.
+    [CmdletBinding()]
+    [OutputType([int])]
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 0 }
+    return @(Get-Content -LiteralPath $Path).Count
+}
+
 function Invoke-FeaturesStage {
     <#
     .SYNOPSIS
@@ -72,7 +92,9 @@ function Invoke-FeaturesStage {
     }
 
     if ($missing.Count -gt 0) {
-        Write-Info "Enabling Windows features: $($missing -join ', ') (one UAC prompt)"
+        Write-Info "Enabling Windows features: $($missing -join ', ') (one UAC prompt from this repo)"
+        $log = Get-ElevatedLogPath
+        $seen = Get-LogLineCount -Path $log
         try {
             $code = Invoke-ElevatedScript -Name 'Enable-Features' -ArgumentList @('-Name', ($missing -join ','))
         }
@@ -80,11 +102,15 @@ function Invoke-FeaturesStage {
             Write-Warn "Could not run the elevated feature script (UAC declined?): $($_.Exception.Message)"
             return 'failed'
         }
+        if ($code -ne 0 -and $log -and (Test-Path -LiteralPath $log -PathType Leaf)) {
+            # The elevated window has closed; show what it reported.
+            foreach ($line in @(Get-Content -LiteralPath $log | Select-Object -Skip $seen)) { Write-Warn "elevated: $line" }
+        }
         switch ($code) {
             0 { }
             3010 { $rebootNeeded = $true }
             2 { Write-Warn 'The elevated script refused: a feature name is not allowlisted.'; return 'failed' }
-            1 { Write-Warn 'The elevated script failed while enabling (see the elevated window).'; return 'failed' }
+            1 { Write-Warn "The elevated script failed while enabling (details above; log: $(if ($log) { $log } else { 'elevated.log' }))."; return 'failed' }
             default { Write-Warn "The elevated script exited with code $code."; return 'failed' }
         }
     }
