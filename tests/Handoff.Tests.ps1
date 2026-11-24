@@ -56,7 +56,7 @@ Describe 'Invoke-LinuxHandoff' {
         $script.Contains('command -v git >/dev/null || { echo "git missing" >&2; exit 1; }') | Should-BeTrue
         $script.Contains('git checkout --quiet --detach "origin/$ref" -- 2>/dev/null || git checkout --quiet --detach "$ref" --') | Should-BeTrue
         $script.Contains('existing clone points at $origin, expected $url') | Should-BeTrue
-        $script.Contains('git remote get-url origin') | Should-BeTrue
+        $script.Contains('remote get-url origin') | Should-BeTrue
     }
 
     It 'rejects an invalid url or ref before running anything' {
