@@ -15,6 +15,7 @@ function Initialize-WindowsStub {
     param()
     $stubs = @{
         'Get-Volume' = { [CmdletBinding()] param([char]$DriveLetter) throw 'stub: mock me' }
+        'Enable-WindowsOptionalFeature' = { [CmdletBinding()] param([switch]$Online, [string]$FeatureName, [switch]$NoRestart) throw 'stub: mock me' }
         'Get-CimInstance' = { [CmdletBinding()] param([string]$ClassName, [string]$Namespace) throw 'stub: mock me' }
     }
     foreach ($name in $stubs.Keys) {
