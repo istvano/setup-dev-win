@@ -9,11 +9,13 @@ Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 # quote (it is wrapped in single quotes on the command line). The repository URL
 # and ref reach it only as $1 and $2 (bash -c <script> handoff <url> <ref>).
 $script:HandoffScript = 'set -Eeuo pipefail; url=$1; ref=$2; ' +
-'command -v git >/dev/null || { echo "git missing in the image" >&2; exit 2; }; ' +
-'mkdir -p ~/workspace; ' +
-'[ -d ~/workspace/setup-dev-linux-wsl/.git ] || git clone "$url" ~/workspace/setup-dev-linux-wsl; ' +
-'cd ~/workspace/setup-dev-linux-wsl; ' +
-'git fetch --quiet origin; git checkout --quiet "$ref"; git pull --ff-only --quiet || true; ' +
+'command -v git >/dev/null || { echo "git missing" >&2; exit 1; }; ' +
+'mkdir -p ~/workspace; dir=~/workspace/setup-dev-linux-wsl; ' +
+'if [ -d "$dir/.git" ]; then origin=$(git -C "$dir" remote get-url origin); ' +
+'[ "${origin%.git}" = "${url%.git}" ] || { echo "existing clone points at $origin, expected $url" >&2; exit 1; }; ' +
+'else git clone "$url" "$dir"; fi; ' +
+'cd "$dir"; git fetch --quiet origin; ' +
+'git checkout --quiet --detach "origin/$ref" -- 2>/dev/null || git checkout --quiet --detach "$ref" --; ' +
 'exec ./bootstrap apply --target wsl'
 
 function Test-LinuxRepoUrl {
@@ -60,8 +62,8 @@ function Invoke-LinuxHandoff {
         Runs setup-dev-linux-wsl's bootstrap inside the dev distro, interactively.
     .DESCRIPTION
         Url and ref are validated, then passed as positional arguments after the fixed
-        script, never substituted into it. Exit 2 from the script means git is missing
-        from the image: git is installed as root and the handoff retried once.
+        script, never substituted into it. git is probed first and installed as root
+        when missing; the handoff then runs once.
     .OUTPUTS
         The bootstrap's exit code (0 = success).
     #>
@@ -74,14 +76,15 @@ function Invoke-LinuxHandoff {
     if (-not (Test-LinuxRepoUrl -Url $Url)) { throw "Invalid Linux repository url '$Url': expected https://github.com/<owner>/<repo>[.git]." }
     if (-not (Test-GitRef -Ref $Ref)) { throw "Invalid Linux repository ref '$Ref'." }
 
-    $line = "-d dev --cd ~ -- bash -c '$($script:HandoffScript)' handoff `"$Url`" `"$Ref`""
-    $code = Invoke-HandoffProcess -ArgumentLine $line
-    if ($code -eq 2) {
-        Write-Warn 'git is missing in dev; installing it as root, then retrying the handoff once.'
+    $probe = { (Invoke-Native -FilePath 'wsl.exe' -AllowExitCode (1..255) -ArgumentList @('-d', 'dev', '--', 'sh', '-c', 'command -v git')).ExitCode -eq 0 }
+    if (-not (& $probe)) {
+        Write-Warn 'git is missing in dev; installing it as root.'
         Invoke-Native -FilePath 'wsl.exe' -ArgumentList @('-d', 'dev', '-u', 'root', '--', 'sh', '-c',
             'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git') | Out-Null
-        $code = Invoke-HandoffProcess -ArgumentLine $line
+        if (-not (& $probe)) { throw 'git is still missing in dev after installing it.' }
     }
+    $line = "-d dev --cd ~ -- bash -c '$($script:HandoffScript)' handoff `"$Url`" `"$Ref`""
+    $code = Invoke-HandoffProcess -ArgumentLine $line
     return [int]$code
 }
 

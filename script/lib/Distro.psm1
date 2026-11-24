@@ -402,4 +402,5 @@ function Assert-DistroPlacement {
 }
 
 Export-ModuleMember -Function Get-DistroLock, Save-VerifiedImage, Get-LinuxUserName, New-CloudInitUserData,
-Get-RegisteredDistro, Install-DevDistro, Set-DevUserPassword, Assert-DistroPlacement, Assert-DefaultUser
+Get-RegisteredDistro, Install-DevDistro, Set-DevUserPassword, Assert-DistroPlacement, Assert-DefaultUser,
+Get-LastResultLine

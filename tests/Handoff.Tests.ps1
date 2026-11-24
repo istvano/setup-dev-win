@@ -34,7 +34,12 @@ Describe 'Invoke-LinuxHandoff' {
         Mock -ModuleName Handoff Write-Info { }
         Mock -ModuleName Handoff Write-Warn { }
         Mock -ModuleName Handoff Invoke-HandoffProcess { $script:Calls.Add($ArgumentLine); $script:Codes.Dequeue() }
-        Mock -ModuleName Handoff Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @() } }
+        $script:Probes = [System.Collections.Generic.Queue[int]]::new()
+        $script:Probes.Enqueue(0)
+        Mock -ModuleName Handoff Invoke-Native {
+            $isProbe = ($ArgumentList -join ' ') -like '*command -v git'
+            [pscustomobject]@{ ExitCode = $(if ($isProbe) { $script:Probes.Dequeue() } else { 0 }); Output = @() }
+        }
     }
 
     It 'passes url and ref only as trailing quoted arguments, never in the script text' {
@@ -46,6 +51,12 @@ Describe 'Invoke-LinuxHandoff' {
         $script.Contains('v1.0') | Should-BeFalse
         $script.Contains("'") | Should-BeFalse
         $script | Should-BeLikeString -Expected 'set -Eeuo pipefail; url=$1; ref=$2; *exec ./bootstrap apply --target wsl'
+        $script.Contains('exit 2') | Should-BeFalse
+        $script.Contains('pull') | Should-BeFalse
+        $script.Contains('command -v git >/dev/null || { echo "git missing" >&2; exit 1; }') | Should-BeTrue
+        $script.Contains('git checkout --quiet --detach "origin/$ref" -- 2>/dev/null || git checkout --quiet --detach "$ref" --') | Should-BeTrue
+        $script.Contains('existing clone points at $origin, expected $url') | Should-BeTrue
+        $script.Contains('git remote get-url origin') | Should-BeTrue
     }
 
     It 'rejects an invalid url or ref before running anything' {
@@ -58,21 +69,25 @@ Describe 'Invoke-LinuxHandoff' {
         $script:Codes.Clear(); $script:Codes.Enqueue(1)
         Invoke-LinuxHandoff -Url $script:Url -Ref 'main' | Should-Be 1
         $script:Calls.Count | Should-Be 1
-        Should-NotInvoke -CommandName Invoke-Native -ModuleName Handoff
     }
 
-    It 'retries once after installing git as root when the image lacks git' {
-        $script:Codes.Clear(); $script:Codes.Enqueue(2); $script:Codes.Enqueue(0)
+    It 'installs git as root when the probe finds none, probes again, then hands off once' {
+        $script:Probes.Clear(); $script:Probes.Enqueue(1); $script:Probes.Enqueue(0)
         Invoke-LinuxHandoff -Url $script:Url -Ref 'main' | Should-Be 0
-        $script:Calls.Count | Should-Be 2
+        $script:Calls.Count | Should-Be 1
         Should-Invoke -CommandName Invoke-Native -ModuleName Handoff -Times 1 -Exactly -ParameterFilter {
             $FilePath -eq 'wsl.exe' -and ($ArgumentList -join ' ') -like '-d dev -u root -- sh -c *apt-get update*apt-get install -y git*' }
     }
 
-    It 'does not retry twice when git is still missing' {
-        $script:Codes.Clear(); $script:Codes.Enqueue(2); $script:Codes.Enqueue(2)
-        Invoke-LinuxHandoff -Url $script:Url -Ref 'main' | Should-Be 2
-        $script:Calls.Count | Should-Be 2
+    It 'fails without handing off when git is still missing after the install' {
+        $script:Probes.Clear(); $script:Probes.Enqueue(1); $script:Probes.Enqueue(1)
+        { Invoke-LinuxHandoff -Url $script:Url -Ref 'main' } | Should-Throw -ExceptionMessage '*still missing*'
+        Should-NotInvoke -CommandName Invoke-HandoffProcess -ModuleName Handoff
+    }
+
+    It 'does not install git when the probe finds it' {
+        Invoke-LinuxHandoff -Url $script:Url -Ref 'main' | Should-Be 0
+        Should-NotInvoke -CommandName Invoke-Native -ModuleName Handoff -ParameterFilter { ($ArgumentList -join ' ') -like '*apt-get*' }
     }
 }
 
