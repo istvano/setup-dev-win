@@ -8,14 +8,20 @@ Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 # The fixed bash program. A literal: no PowerShell interpolation, no single
 # quote (it is wrapped in single quotes on the command line). The repository URL
 # and ref reach it only as $1 and $2 (bash -c <script> handoff <url> <ref>).
+# The existing clone's origin is read with git config, not remote get-url, so an
+# insteadOf rewrite cannot hide a foreign origin. The target commit is resolved
+# before anything changes (origin/<ref> for a branch, else <ref> for a tag or
+# commit) and checked out once with git's own errors visible: an unknown ref or
+# local changes that conflict stop the run instead of running stale code (ADR-013).
 $script:HandoffScript = 'set -Eeuo pipefail; url=$1; ref=$2; ' +
 'command -v git >/dev/null || { echo "git missing" >&2; exit 1; }; ' +
 'mkdir -p ~/workspace; dir=~/workspace/setup-dev-linux-wsl; ' +
-'if [ -d "$dir/.git" ]; then origin=$(git -C "$dir" remote get-url origin); ' +
+'if [ -d "$dir/.git" ]; then origin=$(git -C "$dir" config --get remote.origin.url) || origin=""; ' +
 '[ "${origin%.git}" = "${url%.git}" ] || { echo "existing clone points at $origin, expected $url" >&2; exit 1; }; ' +
 'else git clone "$url" "$dir"; fi; ' +
-'cd "$dir"; git fetch --quiet origin; ' +
-'git checkout --quiet --detach "origin/$ref" -- 2>/dev/null || git checkout --quiet --detach "$ref" --; ' +
+'cd "$dir"; git fetch --quiet --tags origin; ' +
+'t=$(git rev-parse --verify --quiet "origin/$ref^{commit}" || git rev-parse --verify --quiet "$ref^{commit}") || { echo "unknown ref $ref" >&2; exit 1; }; ' +
+'git checkout --quiet --detach "$t"; ' +
 'exec ./bootstrap apply --target wsl'
 
 function Test-LinuxRepoUrl {
