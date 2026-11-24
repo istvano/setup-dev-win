@@ -6,8 +6,22 @@ on `D:`) and hands off to the companion Linux repository
 the development environment inside the distro. It mirrors the operator's macOS
 repository `setup-dev-mac`.
 
-**Status:** milestone 1 is in progress. Only the skeleton, documentation and the test
-gate exist; the bootstrap, stages and profiles are listed in `TASKS.md`.
+**Status:** milestone 1 (bootstrap to a working WSL distro) is implemented: stage-0,
+preflight, features, dotfiles (`.wslconfig`), wsl and verify. App profiles, Windows
+defaults and hardening are listed in `TASKS.md`.
+
+## Quick start
+
+On a fresh Windows 11 x64 machine:
+
+1. Sign in once (winget's App Installer registers only after first interactive login).
+2. `winget install --id Git.Git -e --source winget`
+3. `git clone` this repository to a path of your choice (`D:\src\setup-dev-win` is suggested; nothing depends on it).
+4. `powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1`
+
+Re-run `script\setup.ps1` after a reboot or a failure; stages are idempotent. Check the
+result at any time, read-only, with `pwsh -File script\verify.ps1` (exit 0 = all good).
+See `docs/OPERATIONS.md`.
 
 ## Principles
 

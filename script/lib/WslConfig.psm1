@@ -170,4 +170,26 @@ function Request-WslRestart {
     }
 }
 
-Export-ModuleMember -Function Install-PinnedChezmoi, Invoke-ChezmoiApply, Request-WslRestart
+function Invoke-ChezmoiVerify {
+    <#
+    .SYNOPSIS
+        Runs chezmoi verify for the repository's source; true when nothing has drifted.
+    .DESCRIPTION
+        Uses the same --source and --no-tty as Invoke-ChezmoiApply. --promptString is
+        an init flag and verify does not take it: the answer was written to the
+        chezmoi config by the dotfiles stage's init, which verify reads.
+        [verify on real machine, Task 13]
+    .OUTPUTS
+        @{ Ok = [bool]; Output = [string[]] }
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param()
+    $chezmoi = Get-ChezmoiPath
+    if (-not $chezmoi) { return @{ Ok = $false; Output = @('chezmoi was not found; run the dotfiles stage.') } }
+    $source = Join-Path (Get-RepoRoot) 'chezmoi'
+    $result = Invoke-Native -FilePath $chezmoi -AllowExitCode (1..255) -ArgumentList @('verify', '--source', $source, '--no-tty')
+    return @{ Ok = ($result.ExitCode -eq 0); Output = $result.Output }
+}
+
+Export-ModuleMember -Function Install-PinnedChezmoi, Invoke-ChezmoiApply, Request-WslRestart, Invoke-ChezmoiVerify
