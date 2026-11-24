@@ -37,6 +37,12 @@ repositories and the SHA256-verified Ubuntu image. Stage-0 never downloads winge
 never installs a module from PSGallery. `Invoke-Expression`, `iex` and
 `DownloadString` are banned and enforced by `tests/Repo.Tests.ps1`.
 
+Stage-0 does not call `Set-ExecutionPolicy`. The documented launch is
+`powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1`, and under that
+process-scope override `Set-ExecutionPolicy` raises ExecutionPolicyOverride and
+would abort before the handoff. PowerShell 7 keeps its own execution policy, which
+defaults to RemoteSigned on Windows, so nothing needs persisting (ruling W12).
+
 ## ADR-004: Elevation per step, daily admin account
 
 Status: accepted. Spec section 6.2.

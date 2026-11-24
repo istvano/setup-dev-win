@@ -72,6 +72,43 @@ function Wait-Winget {
     ' and then re-run bootstrap.ps1.'
 }
 
+function ConvertTo-StrictJson {
+    <#
+    .SYNOPSIS
+        Removes commas that directly precede a closing brace or bracket.
+    .DESCRIPTION
+        Walks the text so that a comma inside a string is never touched.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $out = New-Object -TypeName System.Text.StringBuilder
+    $inString = $false
+    $escaped = $false
+    for ($i = 0; $i -lt $Text.Length; $i++) {
+        $c = $Text[$i]
+        if ($inString) {
+            [void]$out.Append($c)
+            if ($escaped) { $escaped = $false }
+            elseif ($c -eq '\') { $escaped = $true }
+            elseif ($c -eq '"') { $inString = $false }
+            continue
+        }
+        if ($c -eq '"') {
+            $inString = $true
+        }
+        elseif ($c -eq ',') {
+            $j = $i + 1
+            while ($j -lt $Text.Length -and [char]::IsWhiteSpace($Text[$j])) { $j++ }
+            if ($j -lt $Text.Length -and ($Text[$j] -eq '}' -or $Text[$j] -eq ']')) {
+                continue
+            }
+        }
+        [void]$out.Append($c)
+    }
+    return $out.ToString()
+}
+
 function Merge-WingetSettings {
     <#
     .SYNOPSIS
@@ -101,6 +138,9 @@ function Merge-WingetSettings {
         # Only lines that start with // are removed, so a // inside a string
         # (for example the $schema URL) is never touched.
         $stripped = [regex]::Replace($raw, '(?m)^[ \t]*//.*$', '')
+        # What `winget settings` writes ends in a trailing comma once the comments
+        # are gone, which Windows PowerShell 5.1 may reject.
+        $stripped = ConvertTo-StrictJson -Text $stripped
         try {
             $settings = ConvertFrom-Json -InputObject $stripped
         }
@@ -115,6 +155,11 @@ function Merge-WingetSettings {
     $telemetry = $null
     if ($settings.PSObject.Properties['telemetry']) {
         $telemetry = $settings.telemetry
+    }
+    if ($telemetry -is [System.Management.Automation.PSCustomObject] -and
+        $telemetry.PSObject.Properties['disable'] -and $telemetry.disable -eq $true) {
+        Write-Host 'winget telemetry is already disabled.'
+        return
     }
     if ($telemetry -isnot [System.Management.Automation.PSCustomObject]) {
         $telemetry = New-Object -TypeName PSObject
@@ -150,8 +195,97 @@ function Get-InstalledPowerShellVersion {
     if (-not $pwsh) {
         return $null
     }
-    $version = & $pwsh.Source -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
-    return ($version | Select-Object -First 1)
+    return (Get-PowerShellVersionAt -Path $pwsh.Source)
+}
+
+function Get-PowerShellVersionAt {
+    <#
+    .SYNOPSIS
+        Returns the version string reported by the given pwsh.exe (a test seam).
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Path)
+    $version = & $Path -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+    return [string]($version | Select-Object -First 1)
+}
+
+function Sync-SessionPath {
+    <#
+    .SYNOPSIS
+        Prepends the Machine and User PATH entries to this session's PATH.
+    .DESCRIPTION
+        The installer changes PATH for new processes only. Existing entries are
+        kept, and duplicates are dropped (case-insensitive, first one wins).
+    #>
+    [CmdletBinding()]
+    param()
+    $parts = @()
+    foreach ($scope in 'Machine', 'User') {
+        $value = [System.Environment]::GetEnvironmentVariable('Path', $scope)
+        if ($value) { $parts += $value.Split(';') }
+    }
+    if ($env:Path) { $parts += $env:Path.Split(';') }
+    $seen = @{}
+    $unique = @()
+    foreach ($part in $parts) {
+        if ($part -and -not $seen.ContainsKey($part.ToLowerInvariant())) {
+            $seen[$part.ToLowerInvariant()] = $true
+            $unique += $part
+        }
+    }
+    $env:Path = $unique -join ';'
+}
+
+function Resolve-PinnedPowerShell {
+    <#
+    .SYNOPSIS
+        Returns the path of a pwsh.exe that reports the pinned version, or throws.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Version)
+
+    $found = $null
+    $onPath = Get-Command -Name 'pwsh.exe' -ErrorAction SilentlyContinue
+    if ($onPath) {
+        $found = Get-PowerShellVersionAt -Path $onPath.Source
+        if ($found -eq $Version) { return $onPath.Source }
+    }
+    $default = Join-Path (Join-Path (Join-Path $env:ProgramFiles 'PowerShell') '7') 'pwsh.exe'
+    $defaultVersion = $null
+    if (Test-Path -LiteralPath $default) {
+        $defaultVersion = Get-PowerShellVersionAt -Path $default
+        if ($defaultVersion -eq $Version) { return $default }
+    }
+    $onPathText = 'not found'
+    if ($found) { $onPathText = $found }
+    $defaultText = 'not found'
+    if ($defaultVersion) { $defaultText = $defaultVersion }
+    throw "PowerShell $Version is required but pwsh on PATH reports '$onPathText' and $default reports '$defaultText'."
+}
+
+function Invoke-Handoff {
+    <#
+    .SYNOPSIS
+        Runs script\setup.ps1 in the given pwsh on this console; returns its exit code.
+    .DESCRIPTION
+        Start-Process without redirection lets the child inherit the console, so
+        the interactive WSL step has a terminal. Paths are quoted for spaces.
+    #>
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)][string]$PwshPath,
+        [Parameter(Mandatory)][string]$SetupPath,
+        [string]$Profiles
+    )
+    $argumentText = '-NoProfile -File "' + $SetupPath + '"'
+    if ($Profiles) {
+        $argumentText += ' -Profiles "' + $Profiles + '"'
+    }
+    $process = Start-Process -FilePath $PwshPath -ArgumentList $argumentText -NoNewWindow -Wait -PassThru
+    return [int]$process.ExitCode
 }
 
 function Invoke-Winget {
@@ -161,7 +295,9 @@ function Invoke-Winget {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string[]]$Arguments)
-    & winget.exe @Arguments
+    # Out-Host: winget's output reaches the console and never the pipeline, so a
+    # caller's return value stays clean.
+    & winget.exe @Arguments | Out-Host
 }
 
 function Install-PinnedPowerShell {
@@ -191,12 +327,22 @@ function Invoke-Bootstrap {
     <#
     .SYNOPSIS
         The stage-0 sequence: assert, wait, settings, install, hand off.
+    .OUTPUTS
+        Exactly one [int], the exit code of script\setup.ps1. Nothing else is
+        emitted on the pipeline.
     #>
     [CmdletBinding()]
+    [OutputType([int])]
     param([string]$Profiles, [switch]$SkipPowerShellInstall)
 
     $pins = Import-PowerShellDataFile -Path (Join-Path (Join-Path $PSScriptRoot 'script') 'lib\pins.psd1')
     Assert-SupportedWindows -MinBuild $pins.MinOsBuild
+
+    $setup = Join-Path (Join-Path $PSScriptRoot 'script') 'setup.ps1'
+    if (-not (Test-Path -LiteralPath $setup)) {
+        throw 'script\setup.ps1 not found next to bootstrap.ps1; is the clone complete?'
+    }
+
     Wait-Winget -TimeoutSeconds 60
 
     $settingsPath = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\settings.json'
@@ -205,24 +351,13 @@ function Invoke-Bootstrap {
     if (-not $SkipPowerShellInstall) {
         Install-PinnedPowerShell -Version $pins.PowerShell
     }
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    # No execution-policy change here: under the documented -ExecutionPolicy Bypass
+    # launch it fails with ExecutionPolicyOverride, and pwsh 7 keeps its own
+    # policy (ADR-003).
 
-    # The installer updates PATH for new processes; refresh this session's copy.
-    $machinePath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $userPath = [System.Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = $machinePath + ';' + $userPath
-
-    $pwsh = Get-Command -Name 'pwsh.exe' -ErrorAction SilentlyContinue
-    if (-not $pwsh) {
-        throw 'pwsh.exe is not on PATH after installation; open a new terminal and re-run bootstrap.ps1.'
-    }
-    $setup = Join-Path (Join-Path $PSScriptRoot 'script') 'setup.ps1'
-    $arguments = @('-NoProfile', '-File', $setup)
-    if ($Profiles) {
-        $arguments += @('-Profiles', $Profiles)
-    }
-    & $pwsh.Source @arguments
-    return $LASTEXITCODE
+    Sync-SessionPath
+    $pwsh = Resolve-PinnedPowerShell -Version $pins.PowerShell
+    return [int](Invoke-Handoff -PwshPath $pwsh -SetupPath $setup -Profiles $Profiles)
 }
 
 if ($env:SETUP_DEV_WIN_NO_MAIN -ne '1') {

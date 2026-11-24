@@ -55,6 +55,36 @@ Describe 'Merge-WingetSettings' {
         $json.'$schema' | Should-Be 'https://aka.ms/winget-settings.schema.json'
     }
 
+    It 'handles the real winget default (trailing comma left after the comments)' {
+        Copy-Item -LiteralPath (Join-Path $script:Fixtures 'real-default.json') -Destination $script:Settings
+        Merge-WingetSettings -Path $script:Settings
+        $json = Get-Content -LiteralPath $script:Settings -Raw | ConvertFrom-Json
+        $json.'$schema' | Should-Be 'https://aka.ms/winget-settings.schema.json'
+        $json.telemetry.disable | Should-Be $true
+    }
+
+    It 'does not touch a comma before a brace inside a string' {
+        ConvertTo-StrictJson -Text '{ "a": "x,}", "b": [1, 2,], }' | Should-Be '{ "a": "x,}", "b": [1, 2] }'
+    }
+
+    It 'treats a zero-byte file as an empty object and backs it up' {
+        New-Item -ItemType File -Path $script:Settings | Out-Null
+        Merge-WingetSettings -Path $script:Settings
+        $json = Get-Content -LiteralPath $script:Settings -Raw | ConvertFrom-Json
+        $json.telemetry.disable | Should-Be $true
+        @(Get-ChildItem -Path $script:Dir -Filter 'settings.json.backup.*').Count | Should-Be 1
+    }
+
+    It 'writes nothing and makes no backup when telemetry is already disabled' {
+        [System.IO.File]::WriteAllText($script:Settings, '{ "telemetry": { "disable": true } }')
+        $before = (Get-Item -LiteralPath $script:Settings).LastWriteTimeUtc
+        Start-Sleep -Milliseconds 50
+        Merge-WingetSettings -Path $script:Settings
+        [System.IO.File]::ReadAllText($script:Settings) | Should-Be '{ "telemetry": { "disable": true } }'
+        (Get-Item -LiteralPath $script:Settings).LastWriteTimeUtc | Should-Be $before
+        @(Get-ChildItem -Path $script:Dir -Filter 'settings.json.backup.*').Count | Should-Be 0
+    }
+
     It 'refuses invalid JSON and leaves the file unchanged' {
         Copy-Item -LiteralPath (Join-Path $script:Fixtures 'invalid.json') -Destination $script:Settings
         $before = [System.IO.File]::ReadAllText($script:Settings)
@@ -142,7 +172,77 @@ Describe 'Install-PinnedPowerShell' {
     }
 }
 
+Describe 'Resolve-PinnedPowerShell' {
+    It 'returns the pwsh on PATH when it has the pinned version' {
+        Mock Get-Command { [pscustomobject]@{ Source = 'C:\\x\\pwsh.exe' } }
+        Mock Get-PowerShellVersionAt { '7.6.6' }
+        Resolve-PinnedPowerShell -Version '7.6.6' | Should-Be 'C:\\x\\pwsh.exe'
+    }
+
+    It 'falls back to the default install path when PATH has another version' {
+        $env:ProgramFiles = if ($env:ProgramFiles) { $env:ProgramFiles } else { 'PF' }
+        Mock Get-Command { [pscustomobject]@{ Source = 'old-pwsh' } }
+        Mock Test-Path { $true }
+        Mock Get-PowerShellVersionAt { if ($Path -eq 'old-pwsh') { '7.4.0' } else { '7.6.6' } }
+        Resolve-PinnedPowerShell -Version '7.6.6' | Should-BeLikeString '*pwsh.exe'
+    }
+
+    It 'throws naming both versions when neither matches' {
+        Mock Get-Command { [pscustomobject]@{ Source = 'old-pwsh' } }
+        Mock Test-Path { $true }
+        Mock Get-PowerShellVersionAt { if ($Path -eq 'old-pwsh') { '7.4.0' } else { '7.5.1' } }
+        { Resolve-PinnedPowerShell -Version '7.6.6' } | Should-Throw -ExceptionMessage '*7.4.0*7.5.1*'
+    }
+}
+
+Describe 'Invoke-Bootstrap' {
+    BeforeEach {
+        $env:LOCALAPPDATA = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $TestDrive 'local' }
+        Mock Assert-SupportedWindows { }
+        Mock Wait-Winget { }
+        Mock Merge-WingetSettings { }
+        Mock Install-PinnedPowerShell { }
+        Mock Sync-SessionPath { }
+        Mock Resolve-PinnedPowerShell { 'pwsh-fake' }
+        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -like '*setup.ps1' }
+        Mock Invoke-Handoff { 0 }
+    }
+
+    It 'returns exactly one [int]' {
+        $result = Invoke-Bootstrap -Profiles 'dev'
+        @($result).Count | Should-Be 1
+        $result | Should-HaveType ([int])
+    }
+
+    It 'passes the handoff exit code through unchanged (3010)' {
+        Mock Invoke-Handoff { 3010 }
+        Invoke-Bootstrap -Profiles 'dev' | Should-Be 3010
+    }
+
+    It 'stops before the handoff when winget fails' {
+        Mock Install-PinnedPowerShell { throw 'winget failed' }
+        { Invoke-Bootstrap } | Should-Throw -ExceptionMessage '*winget failed*'
+        Should-NotInvoke -CommandName Invoke-Handoff
+    }
+
+    It 'names setup.ps1 when it is missing' {
+        Mock Test-Path { $false } -ParameterFilter { $LiteralPath -like '*setup.ps1' }
+        { Invoke-Bootstrap } | Should-Throw -ExceptionMessage '*setup.ps1*'
+        Should-NotInvoke -CommandName Invoke-Handoff
+    }
+
+    It 'skips the install when asked' {
+        Invoke-Bootstrap -SkipPowerShellInstall | Out-Null
+        Should-NotInvoke -CommandName Install-PinnedPowerShell
+    }
+}
+
 Describe 'bootstrap.ps1 static checks' {
+    It 'does not change the execution policy' {
+        $code = Get-Content -LiteralPath $script:Bootstrap | Where-Object { $_ -notmatch '^\s*#' }
+        ($code -join "`n") | Should-NotMatchString 'Set-ExecutionPolicy'
+    }
+
     It 'main does not run when SETUP_DEV_WIN_NO_MAIN is 1' {
         # Reaching this point means the dot-source in BeforeAll returned.
         (Get-Command -Name Merge-WingetSettings).CommandType | Should-Be 'Function'
