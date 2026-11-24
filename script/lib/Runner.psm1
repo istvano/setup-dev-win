@@ -15,6 +15,8 @@ foreach ($stageModule in Get-ChildItem -LiteralPath (Join-Path (Split-Path -Pare
 $script:StageOrder = @('preflight', 'features', 'dotfiles', 'wsl', 'verify')
 $script:ValidProfiles = @('core', 'lab')
 $script:RebootMessage = 'Reboot, then run script\setup.ps1 again.'
+# bootstrap.ps1 carries the same text; keep the two identical.
+$script:ElevatedRefusal = 'Run from a normal (non-elevated) terminal; elevation is requested per step.'
 
 function ConvertTo-ProfileList {
     # Internal. Parses the csv, validates against the milestone's profiles, always includes core.
@@ -64,7 +66,7 @@ function Invoke-SetupRun {
     )
 
     if (Test-IsElevated) {
-        Write-Warn 'setup.ps1 must run non-elevated; it requests elevation itself only for the steps that need it.'
+        Write-Warn $script:ElevatedRefusal
         return 1
     }
     try {

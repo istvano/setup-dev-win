@@ -22,6 +22,25 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# The same refusal text as script\setup.ps1 (Runner.psm1).
+$script:ElevatedRefusal = 'Run from a normal (non-elevated) terminal; elevation is requested per step.'
+
+function Test-IsAdministrator {
+    <#
+    .SYNOPSIS
+        True when this process runs elevated (a test seam; false off Windows).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+        return $false
+    }
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object -TypeName System.Security.Principal.WindowsPrincipal -ArgumentList $identity
+    return [bool]$principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 function Get-OsBuildNumber {
     <#
     .SYNOPSIS
@@ -156,8 +175,11 @@ function Merge-WingetSettings {
     if ($settings.PSObject.Properties['telemetry']) {
         $telemetry = $settings.telemetry
     }
+    # Only a real JSON true counts: -eq $true would also accept the string "true",
+    # which winget does not honour.
     if ($telemetry -is [System.Management.Automation.PSCustomObject] -and
-        $telemetry.PSObject.Properties['disable'] -and $telemetry.disable -eq $true) {
+        $telemetry.PSObject.Properties['disable'] -and
+        $telemetry.disable -is [bool] -and $telemetry.disable) {
         Write-Host 'winget telemetry is already disabled.'
         return
     }
@@ -196,6 +218,29 @@ function Get-InstalledPowerShellVersion {
         return $null
     }
     return (Get-PowerShellVersionAt -Path $pwsh.Source)
+}
+
+function Test-PowerShellVersionAccepted {
+    <#
+    .SYNOPSIS
+        True when Version is in the floor's major.minor (the LTS line) and >= Floor.
+    .DESCRIPTION
+        pins.psd1 PowerShell is a floor within the LTS minor (ADR-014): a later
+        7.6 patch that Windows Update or winget installed is accepted, a 7.7 or a
+        preview is not. Anything that does not parse as a version is rejected.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [AllowEmptyString()][AllowNull()][string]$Version,
+        [Parameter(Mandatory)][string]$Floor
+    )
+    $have = $null
+    $want = [version]$Floor
+    if (-not [System.Version]::TryParse([string]$Version, [ref]$have)) {
+        return $false
+    }
+    return [bool]($have.Major -eq $want.Major -and $have.Minor -eq $want.Minor -and $have -ge $want)
 }
 
 function Get-PowerShellVersionAt {
@@ -240,7 +285,9 @@ function Sync-SessionPath {
 function Resolve-PinnedPowerShell {
     <#
     .SYNOPSIS
-        Returns the path of a pwsh.exe that reports the pinned version, or throws.
+        Returns the path of a pwsh.exe whose version passes the floor rule, or throws.
+    .PARAMETER Version
+        The floor (pins.psd1 PowerShell); see Test-PowerShellVersionAccepted.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -250,19 +297,20 @@ function Resolve-PinnedPowerShell {
     $onPath = Get-Command -Name 'pwsh.exe' -ErrorAction SilentlyContinue
     if ($onPath) {
         $found = Get-PowerShellVersionAt -Path $onPath.Source
-        if ($found -eq $Version) { return $onPath.Source }
+        if (Test-PowerShellVersionAccepted -Version $found -Floor $Version) { return $onPath.Source }
     }
     $default = Join-Path (Join-Path (Join-Path $env:ProgramFiles 'PowerShell') '7') 'pwsh.exe'
     $defaultVersion = $null
     if (Test-Path -LiteralPath $default) {
         $defaultVersion = Get-PowerShellVersionAt -Path $default
-        if ($defaultVersion -eq $Version) { return $default }
+        if (Test-PowerShellVersionAccepted -Version $defaultVersion -Floor $Version) { return $default }
     }
     $onPathText = 'not found'
     if ($found) { $onPathText = $found }
     $defaultText = 'not found'
     if ($defaultVersion) { $defaultText = $defaultVersion }
-    throw "PowerShell $Version is required but pwsh on PATH reports '$onPathText' and $default reports '$defaultText'."
+    $line = ([version]$Version).Major.ToString() + '.' + ([version]$Version).Minor.ToString()
+    throw "PowerShell $line.x at or above $Version is required but pwsh on PATH reports '$onPathText' and $default reports '$defaultText'."
 }
 
 function Invoke-Handoff {
@@ -272,6 +320,10 @@ function Invoke-Handoff {
     .DESCRIPTION
         Start-Process without redirection lets the child inherit the console, so
         the interactive WSL step has a terminal. Paths are quoted for spaces.
+        -Wait is not used: in Windows PowerShell 5.1 it waits for every descendant
+        (a job object), so a long-lived helper the setup started (wslhost, for
+        example) would hang stage-0 after a successful run. Reading Handle once
+        keeps ExitCode available after the process exits.
     #>
     [CmdletBinding()]
     [OutputType([int])]
@@ -284,7 +336,9 @@ function Invoke-Handoff {
     if ($Profiles) {
         $argumentText += ' -Profiles "' + $Profiles + '"'
     }
-    $process = Start-Process -FilePath $PwshPath -ArgumentList $argumentText -NoNewWindow -Wait -PassThru
+    $process = @(Start-Process -FilePath $PwshPath -ArgumentList $argumentText -NoNewWindow -PassThru)[-1]
+    $null = $process.Handle
+    $process.WaitForExit()
     return [int]$process.ExitCode
 }
 
@@ -303,18 +357,27 @@ function Invoke-Winget {
 function Install-PinnedPowerShell {
     <#
     .SYNOPSIS
-        Installs the exact PowerShell version through winget unless it is present.
+        Installs the pinned PowerShell MSI through winget unless an accepted one is present.
+    .DESCRIPTION
+        An installed 7.6.x at or above the pin is kept (ADR-014). Otherwise the
+        exact pinned version is installed as the machine-wide MSI (--installer-type
+        wix --scope machine): it lands in Program Files, so the elevated steps can
+        relaunch it by path, and it avoids the MSIX package's file virtualization.
+        The MSI raises its own UAC prompt.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Version)
 
-    if ((Get-InstalledPowerShellVersion) -eq $Version) {
-        Write-Host "PowerShell $Version is already installed."
+    $installed = Get-InstalledPowerShellVersion
+    if (Test-PowerShellVersionAccepted -Version $installed -Floor $Version) {
+        Write-Host "PowerShell $installed is already installed (pin $Version or a later patch)."
         return
     }
+    Write-Host "Installing PowerShell $Version (machine-wide MSI; expect a UAC prompt)..."
     $arguments = @(
         'install', '--id', 'Microsoft.PowerShell', '--source', 'winget', '--exact',
-        '--version', $Version, '--silent', '--accept-package-agreements',
+        '--version', $Version, '--installer-type', 'wix', '--scope', 'machine',
+        '--silent', '--accept-package-agreements',
         '--accept-source-agreements', '--disable-interactivity'
     )
     Invoke-Winget -Arguments $arguments
@@ -335,6 +398,11 @@ function Invoke-Bootstrap {
     [OutputType([int])]
     param([string]$Profiles, [switch]$SkipPowerShellInstall)
 
+    # Up front, before anything changes: an elevated stage-0 would hand an
+    # elevated pwsh to setup.ps1, which refuses it anyway (ADR-004).
+    if (Test-IsAdministrator) {
+        throw $script:ElevatedRefusal
+    }
     $pins = Import-PowerShellDataFile -Path (Join-Path (Join-Path $PSScriptRoot 'script') 'lib\pins.psd1')
     Assert-SupportedWindows -MinBuild $pins.MinOsBuild
 

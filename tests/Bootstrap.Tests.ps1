@@ -85,6 +85,15 @@ Describe 'Merge-WingetSettings' {
         @(Get-ChildItem -Path $script:Dir -Filter 'settings.json.backup.*').Count | Should-Be 0
     }
 
+    It 'treats a string "true" as not disabled and writes a real boolean' {
+        [System.IO.File]::WriteAllText($script:Settings, '{ "telemetry": { "disable": "true" } }')
+        Merge-WingetSettings -Path $script:Settings
+        $json = Get-Content -LiteralPath $script:Settings -Raw | ConvertFrom-Json
+        $json.telemetry.disable | Should-HaveType ([bool])
+        $json.telemetry.disable | Should-Be $true
+        @(Get-ChildItem -Path $script:Dir -Filter 'settings.json.backup.*').Count | Should-Be 1
+    }
+
     It 'refuses invalid JSON and leaves the file unchanged' {
         Copy-Item -LiteralPath (Join-Path $script:Fixtures 'invalid.json') -Destination $script:Settings
         $before = [System.IO.File]::ReadAllText($script:Settings)
@@ -148,6 +157,27 @@ Describe 'Wait-Winget' {
     }
 }
 
+Describe 'Test-PowerShellVersionAccepted' {
+    It 'accepts <Version> for floor 7.6.6' -ForEach @(
+        @{ Version = '7.6.6' }
+        @{ Version = '7.6.9' }
+        @{ Version = '7.6.10' }
+    ) {
+        Test-PowerShellVersionAccepted -Version $Version -Floor '7.6.6' | Should-BeTrue
+    }
+
+    It 'rejects <Version> for floor 7.6.6' -ForEach @(
+        @{ Version = '7.6.5' }
+        @{ Version = '7.7.0' }
+        @{ Version = '7.5.13' }
+        @{ Version = '8.6.6' }
+        @{ Version = '7.6.7-preview.1' }
+        @{ Version = '' }
+    ) {
+        Test-PowerShellVersionAccepted -Version $Version -Floor '7.6.6' | Should-BeFalse
+    }
+}
+
 Describe 'Install-PinnedPowerShell' {
     It 'skips when the pinned version is already installed' {
         Mock Get-InstalledPowerShellVersion { '7.6.6' }
@@ -156,12 +186,30 @@ Describe 'Install-PinnedPowerShell' {
         Should-NotInvoke -CommandName Invoke-Winget
     }
 
-    It 'installs the exact version through winget when absent' {
+    It 'skips when a newer 7.6 patch is installed (7.6.9 for pin 7.6.6)' {
+        Mock Get-InstalledPowerShellVersion { '7.6.9' }
+        Mock Invoke-Winget { }
+        Install-PinnedPowerShell -Version '7.6.6'
+        Should-NotInvoke -CommandName Invoke-Winget
+    }
+
+    It 'installs when the installed version is <Installed>' -ForEach @(
+        @{ Installed = '7.7.0' }
+        @{ Installed = '7.6.5' }
+    ) {
+        Mock Get-InstalledPowerShellVersion ([scriptblock]::Create("'$Installed'"))
+        Mock Invoke-Winget { $global:LASTEXITCODE = 0 }
+        Install-PinnedPowerShell -Version '7.6.6'
+        Should-Invoke -CommandName Invoke-Winget -Times 1 -Exactly
+    }
+
+    It 'installs the exact version as the machine-wide MSI through winget when absent' {
         Mock Get-InstalledPowerShellVersion { $null }
         Mock Invoke-Winget { $script:Captured = $Arguments; $global:LASTEXITCODE = 0 }
         Install-PinnedPowerShell -Version '7.6.6'
         $joined = $script:Captured -join ' '
         $joined | Should-BeLikeString 'install --id Microsoft.PowerShell --source winget --exact --version 7.6.6 *'
+        $joined | Should-BeLikeString '* --installer-type wix --scope machine *'
         $joined | Should-BeLikeString '*--disable-interactivity'
     }
 
@@ -179,25 +227,61 @@ Describe 'Resolve-PinnedPowerShell' {
         Resolve-PinnedPowerShell -Version '7.6.6' | Should-Be 'C:\\x\\pwsh.exe'
     }
 
+    It 'accepts a newer 7.6 patch on PATH (7.6.9 for pin 7.6.6)' {
+        Mock Get-Command { [pscustomobject]@{ Source = 'C:\\x\\pwsh.exe' } }
+        Mock Get-PowerShellVersionAt { '7.6.9' }
+        Resolve-PinnedPowerShell -Version '7.6.6' | Should-Be 'C:\\x\\pwsh.exe'
+    }
+
     It 'falls back to the default install path when PATH has another version' {
         $env:ProgramFiles = if ($env:ProgramFiles) { $env:ProgramFiles } else { 'PF' }
         Mock Get-Command { [pscustomobject]@{ Source = 'old-pwsh' } }
         Mock Test-Path { $true }
-        Mock Get-PowerShellVersionAt { if ($Path -eq 'old-pwsh') { '7.4.0' } else { '7.6.6' } }
+        Mock Get-PowerShellVersionAt { if ($Path -eq 'old-pwsh') { '7.7.0' } else { '7.6.6' } }
         Resolve-PinnedPowerShell -Version '7.6.6' | Should-BeLikeString '*pwsh.exe'
     }
 
     It 'throws naming both versions when neither matches' {
         Mock Get-Command { [pscustomobject]@{ Source = 'old-pwsh' } }
         Mock Test-Path { $true }
-        Mock Get-PowerShellVersionAt { if ($Path -eq 'old-pwsh') { '7.4.0' } else { '7.5.1' } }
-        { Resolve-PinnedPowerShell -Version '7.6.6' } | Should-Throw -ExceptionMessage '*7.4.0*7.5.1*'
+        Mock Get-PowerShellVersionAt { if ($Path -eq 'old-pwsh') { '7.4.0' } else { '7.6.5' } }
+        { Resolve-PinnedPowerShell -Version '7.6.6' } | Should-Throw -ExceptionMessage '*7.4.0*7.6.5*'
+    }
+}
+
+Describe 'Invoke-Handoff' {
+    BeforeEach {
+        $script:Fake = New-Object -TypeName PSObject
+        Add-Member -InputObject $script:Fake -NotePropertyName Handle -NotePropertyValue ([IntPtr]::Zero)
+        Add-Member -InputObject $script:Fake -NotePropertyName ExitCode -NotePropertyValue 3010
+        Add-Member -InputObject $script:Fake -MemberType ScriptMethod -Name WaitForExit -Value { }
+        Mock Start-Process { 'stdout noise'; $script:Fake }
+    }
+
+    It 'quotes paths with spaces into one argument string and does not pass -Wait' {
+        $r = Invoke-Handoff -PwshPath 'C:\Program Files\PowerShell\7\pwsh.exe' -SetupPath 'D:\My Repos\setup-dev-win\script\setup.ps1' -Profiles 'core,lab'
+        @($r).Count | Should-Be 1
+        $r | Should-HaveType ([int])
+        $r | Should-Be 3010
+        Should-Invoke -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $FilePath -eq 'C:\Program Files\PowerShell\7\pwsh.exe' -and
+            $ArgumentList -ceq '-NoProfile -File "D:\My Repos\setup-dev-win\script\setup.ps1" -Profiles "core,lab"' -and
+            $NoNewWindow -and $PassThru -and -not $Wait
+        }
+    }
+
+    It 'omits -Profiles when none is given' {
+        $null = Invoke-Handoff -PwshPath 'pwsh.exe' -SetupPath 'C:\r\script\setup.ps1'
+        Should-Invoke -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $ArgumentList -ceq '-NoProfile -File "C:\r\script\setup.ps1"'
+        }
     }
 }
 
 Describe 'Invoke-Bootstrap' {
     BeforeEach {
         $env:LOCALAPPDATA = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $TestDrive 'local' }
+        Mock Test-IsAdministrator { $false }
         Mock Assert-SupportedWindows { }
         Mock Wait-Winget { }
         Mock Merge-WingetSettings { }
@@ -228,6 +312,16 @@ Describe 'Invoke-Bootstrap' {
     It 'names setup.ps1 when it is missing' {
         Mock Test-Path { $false } -ParameterFilter { $LiteralPath -like '*setup.ps1' }
         { Invoke-Bootstrap } | Should-Throw -ExceptionMessage '*setup.ps1*'
+        Should-NotInvoke -CommandName Invoke-Handoff
+    }
+
+    It 'refuses an elevated launch before doing anything' {
+        Mock Test-IsAdministrator { $true }
+        $thrown = $null
+        try { Invoke-Bootstrap } catch { $thrown = $_.Exception.Message }
+        $thrown | Should-Be 'Run from a normal (non-elevated) terminal; elevation is requested per step.'
+        Should-NotInvoke -CommandName Assert-SupportedWindows
+        Should-NotInvoke -CommandName Install-PinnedPowerShell
         Should-NotInvoke -CommandName Invoke-Handoff
     }
 

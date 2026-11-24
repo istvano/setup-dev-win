@@ -153,6 +153,13 @@ Describe 'Elevation invariants' {
         @($offenders) | Should-BeCollection @() -Because 'ADR: never touch Windows Sandbox'
     }
 
+    It 'bootstrap.ps1 and the runner refuse an elevated launch with the same text' {
+        $text = 'Run from a normal (non-elevated) terminal; elevation is requested per step.'
+        foreach ($rel in 'bootstrap.ps1', 'script/lib/Runner.psm1') {
+            (Get-Content -LiteralPath (Join-Path $script:Root $rel) -Raw).Contains("'$text'") | Should-BeTrue -Because $rel
+        }
+    }
+
     It 'every script under script/elevated is allowlisted explicitly' {
         $elevated = @(Get-ChildItem -Path (Join-Path $script:Root 'script/elevated') -File | ForEach-Object Name)
         $elevated | Should-BeCollection @('Enable-Features.ps1')

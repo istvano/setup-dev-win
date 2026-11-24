@@ -34,7 +34,7 @@ Describe 'Invoke-SetupRun' {
     It 'refuses to run elevated' {
         Mock -ModuleName Runner Test-IsElevated { $true }
         Invoke-SetupRun | Should-Be 1
-        ($script:Warned -join ' ') | Should-BeLikeString -Expected '*non-elevated*'
+        ($script:Warned -join ' ') | Should-Be 'Run from a normal (non-elevated) terminal; elevation is requested per step.'
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-PreflightStage
     }
 
