@@ -41,7 +41,7 @@ jobs:
       - name: Gate
         run: pwsh -NoLogo -NoProfile -File script/test.ps1 -RequireLinters
       # Stage-0 runs on the Windows PowerShell 5.1 that ships with Windows, so its
-      # tests run there too (W8). Pester is installed for 5.1 separately: the
+      # tests run there too. Pester is installed for 5.1 separately: the
       # modules above went to the PowerShell 7 CurrentUser path.
       - name: Stage-0 tests under Windows PowerShell 5.1
         shell: powershell
@@ -73,7 +73,9 @@ jobs:
           echo "$HOME/go/bin" >>"$GITHUB_PATH"
       - name: actionlint
         run: actionlint
+      # Every YAML file (workflows, cloud-init user-data, the yamllint config);
+      # --strict makes warnings fail too.
       - name: yamllint
-        run: yamllint .github/workflows
+        run: yamllint --strict .
       - name: gitleaks
         run: gitleaks dir --no-banner --redact .

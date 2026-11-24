@@ -1,5 +1,7 @@
 ---
 extends: default
+# Local runs skip what git ignores (.superpowers/, .tools/); CI checks out none of it.
+ignore-from-file: .gitignore
 rules:
   # Workflow run blocks carry long URLs and commands.
   line-length: disable
@@ -9,3 +11,6 @@ rules:
   document-start: disable
   comments:
     min-spaces-from-content: 1
+    # cloud-init requires the first line to be exactly `#cloud-config`.
+    ignore: |
+      wsl/user-data.template.yaml

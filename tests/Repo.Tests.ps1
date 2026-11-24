@@ -116,6 +116,11 @@ Describe 'Workflows' {
         @($offenders | ForEach-Object { "$($_.File): $($_.Text.Trim())" }) | Should-BeCollection @()
     }
 
+    It 'yamllint covers every YAML file in the repository, not only the workflows' {
+        $runs = @($script:WorkflowLines | Where-Object { $_.Text -match '^\s*run:\s*yamllint\b' } | ForEach-Object { $_.Text.Trim() })
+        $runs | Should-ContainCollection @('run: yamllint --strict .')
+    }
+
     It 'sets persist-credentials: false on every checkout' {
         $offenders = foreach ($file in $script:WorkflowFiles) {
             $lines = @($script:WorkflowLines | Where-Object File -EQ $file.Name | ForEach-Object Text)

@@ -32,6 +32,13 @@ Describe 'Invoke-Native' {
         $result.Output | Should-BeCollection @('hello', 'oops')
     }
 
+    It 'captures output and a zero exit code through cmd on Windows' -Skip:(-not $IsWindows) {
+        $result = Invoke-Native -FilePath 'cmd' -ArgumentList @('/c', 'echo hello & echo oops 1>&2')
+        $result.ExitCode | Should-Be 0
+        # cmd keeps the space before & and 1>&2 in the echoed text.
+        @($result.Output | ForEach-Object { $_.Trim() }) | Should-BeCollection @('hello', 'oops')
+    }
+
     It 'sets WSL_UTF8 only for wsl' -Skip:(-not $IsLinux) {
         $env:WSL_UTF8 = $null
         $null = Invoke-Native -FilePath '/bin/sh' -ArgumentList @('-c', 'exit 0')
