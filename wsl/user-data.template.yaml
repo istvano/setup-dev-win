@@ -1,0 +1,17 @@
+#cloud-config
+# First-boot minimum for the dev distro. No passwords, keys or secrets: the
+# password is set interactively afterwards (Set-DevUserPassword). This file is
+# deleted after first boot. The only placeholder is __USER__.
+users:
+  - name: __USER__
+    groups: [sudo]
+    shell: /bin/bash
+    lock_passwd: true
+write_files:
+  - path: /etc/wsl.conf
+    append: true
+    content: |
+      [boot]
+      systemd=true
+      [user]
+      default=__USER__
