@@ -1,0 +1,13 @@
+{{- /* Data for dot_wslconfig.tmpl. Off Windows (tests, CI containers) the memory probe is skipped and defaults to 0; the .wslconfig template then fails closed. */ -}}
+{{- $hostMemoryGB := 0 -}}
+{{- if lookPath "powershell.exe" -}}
+{{-   $hostMemoryGB = output "powershell.exe" "-NoProfile" "-Command" "[math]::Floor((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB)" | trim | atoi -}}
+{{- end -}}
+[data]
+    wslDistroRoot = {{ promptStringOnce . "wslDistroRoot" "WSL distro root" "D:\\WSL" | toToml }}
+    hostMemoryGB = {{ $hostMemoryGB }}
+    logicalProcessors = {{ env "NUMBER_OF_PROCESSORS" | atoi }}
+
+[git]
+    autoCommit = false
+    autoPush = false

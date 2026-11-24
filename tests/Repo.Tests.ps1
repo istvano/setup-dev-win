@@ -154,3 +154,14 @@ Describe 'Elevation invariants' {
         $elevated | Should-BeCollection @('Enable-Features.ps1')
     }
 }
+
+Describe 'WSL posture invariants (repo-wide)' {
+    # Code and configuration only: prose (docs) may name what is forbidden.
+    It 'no code or config file selects mirrored networking or allows default inbound' {
+        $hits = Get-ChildItem -Path $script:Root -Recurse -File -Force -Include '*.ps1', '*.psm1', '*.psd1', '*.tmpl', '*.toml', '*.yml', '*.yaml', '*.json', '*.wslconfig' |
+            Where-Object { $_.FullName -notmatch '[\\/](\.git|\.superpowers|\.tools|docs)[\\/]' -and $_.FullName -ne $script:Self } |
+            Select-String -Pattern 'networkingMode\s*=\s*mirrored', 'DefaultInboundAction\s+Allow' |
+            ForEach-Object { $_.Path.Substring($script:Root.Length + 1) }
+        @($hits) | Should-BeCollection @() -Because 'NAT with the firewall on is a global constraint'
+    }
+}

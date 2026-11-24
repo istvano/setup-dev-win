@@ -1,0 +1,206 @@
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+BeforeAll {
+    $script:Root = Split-Path -Parent $PSScriptRoot
+    Import-Module (Join-Path $script:Root 'script/lib/Common.psm1') -Force
+    # Dotfiles first: it re-imports WslConfig with -Force, which would otherwise
+    # remove WslConfig's exports from this scope.
+    Import-Module (Join-Path $script:Root 'script/stages/Dotfiles.psm1') -Force
+    Import-Module (Join-Path $script:Root 'script/lib/WslConfig.psm1') -Force
+    $script:Template = Join-Path $script:Root 'chezmoi/dot_wslconfig.tmpl'
+    $script:Fixtures = Join-Path $PSScriptRoot 'fixtures/chezmoi'
+
+    # Renders the template with a fixture as chezmoi data. Returns the text with
+    # LF line endings and the chezmoi exit code.
+    function script:Invoke-Render {
+        param([Parameter(Mandatory)][string]$Fixture)
+        $PSNativeCommandUseErrorActionPreference = $false
+        $text = Get-Content -LiteralPath $script:Template -Raw
+        $out = $text | & chezmoi execute-template --config (Join-Path $script:Fixtures $Fixture) 2>&1
+        [pscustomobject]@{
+            ExitCode = $LASTEXITCODE
+            Text = (($out | ForEach-Object { "$_" }) -join "`n") -replace "`r`n", "`n"
+        }
+    }
+}
+
+Describe 'dot_wslconfig.tmpl' {
+    It 'renders the exact .wslconfig for the ms02 fixture' {
+        $expected = @'
+[wsl2]
+# Half of host RAM, so the Windows side and the lab VMs keep the rest.
+memory=47GB
+# Logical processors minus 2, never below 2: the host stays responsive.
+processors=22
+# Fixed swap so a runaway build cannot grow the page file unbounded.
+swap=16GB
+# NAT, never mirrored: the Windows Firewall stays in the path.
+networkingMode=nat
+# Windows tools reach WSL services on localhost; nothing is exposed to the LAN.
+localhostForwarding=true
+# Apply Windows Firewall rules to WSL traffic.
+firewall=true
+# Distro VHDs live on the data volume, not the system drive.
+distributionInstallPath=D:\\WSL
+
+[general]
+# Do not send WSL diagnostics to Microsoft.
+telemetry=false
+
+[experimental]
+# Sparse VHDs return freed space to the host.
+sparseVhd=true
+# Hand idle page cache back to Windows gradually.
+autoMemoryReclaim=gradual
+'@ -replace "`r`n", "`n"
+        $result = Invoke-Render -Fixture 'ms02.toml'
+        $result.ExitCode | Should-Be 0
+        $result.Text.TrimEnd() | Should-Be $expected.TrimEnd()
+    }
+
+    It 'never lets processors fall below 2' {
+        $result = Invoke-Render -Fixture 'tiny-cpu.toml'
+        $result.ExitCode | Should-Be 0
+        $result.Text | Should-BeLikeString '*processors=2*'
+        $result.Text | Should-NotBeLikeString '*processors=0*'
+    }
+
+    It 'fails closed when host memory detection yielded less than 4 GB' {
+        $result = Invoke-Render -Fixture 'no-memory.toml'
+        $result.ExitCode | Should-NotBe 0
+        $result.Text | Should-BeLikeString '*hostMemoryGB*'
+    }
+
+    It 'fails closed when the processor count is missing' {
+        $result = Invoke-Render -Fixture 'no-cpu.toml'
+        $result.ExitCode | Should-NotBe 0
+        $result.Text | Should-BeLikeString '*NUMBER_OF_PROCESSORS*'
+    }
+}
+
+Describe 'Install-PinnedChezmoi' {
+    BeforeEach {
+        Mock -ModuleName WslConfig Write-Info {}
+        Mock -ModuleName WslConfig Write-Ok {}
+        Mock -ModuleName WslConfig Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @() } }
+    }
+    It 'skips winget when the pinned version is installed' {
+        Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { '2.74.2' }
+        Install-PinnedChezmoi -Version '2.74.2'
+        Should-NotInvoke -ModuleName WslConfig -CommandName Invoke-Native
+    }
+    It 'installs the exact version at user scope when another version is present' {
+        Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { '2.60.0' }
+        Install-PinnedChezmoi -Version '2.74.2'
+        Should-Invoke -ModuleName WslConfig -CommandName Invoke-Native -Times 1 -Exactly -ParameterFilter {
+            $FilePath -eq 'winget.exe' -and
+            $ArgumentList -contains 'twpayne.chezmoi' -and $ArgumentList -contains '--exact' -and
+            $ArgumentList[([array]::IndexOf($ArgumentList, '--version') + 1)] -eq '2.74.2' -and
+            $ArgumentList[([array]::IndexOf($ArgumentList, '--scope') + 1)] -eq 'user'
+        }
+    }
+    It 'returns nothing on the pipeline' {
+        Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { $null }
+        @(Install-PinnedChezmoi -Version '2.74.2').Count | Should-Be 0
+    }
+}
+
+Describe 'Invoke-ChezmoiApply' {
+    BeforeEach {
+        Mock -ModuleName WslConfig Write-Info {}
+        Mock -ModuleName WslConfig Get-ChezmoiPath { 'chezmoi' }
+        Mock -ModuleName WslConfig Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @('applied') } }
+    }
+    It 'reports Changed when the file hash differs' {
+        $script:hashes = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'ABC'))
+        Mock -ModuleName WslConfig Get-WslConfigHash { $script:hashes.Dequeue() }
+        (Invoke-ChezmoiApply).Changed | Should-BeTrue
+    }
+    It 'reports unchanged when the hash is the same' {
+        Mock -ModuleName WslConfig Get-WslConfigHash { 'SAME' }
+        (Invoke-ChezmoiApply).Changed | Should-BeFalse
+    }
+    It 'applies the repo chezmoi source and passes the distro root to the prompt' {
+        Mock -ModuleName WslConfig Get-WslConfigHash { 'SAME' }
+        $null = Invoke-ChezmoiApply -DistroRoot 'E:\WSL'
+        Should-Invoke -ModuleName WslConfig -CommandName Invoke-Native -Times 1 -Exactly -ParameterFilter {
+            $ArgumentList[0] -eq 'init' -and $ArgumentList -contains '--apply' -and
+            $ArgumentList[([array]::IndexOf($ArgumentList, '--source') + 1)] -like '*chezmoi' -and
+            $ArgumentList -contains 'WSL distro root=E:\WSL'
+        }
+    }
+}
+
+Describe 'Request-WslRestart' {
+    BeforeEach {
+        Mock -ModuleName WslConfig Write-Warn {}
+        Mock -ModuleName WslConfig Write-Ok {}
+        Mock -ModuleName WslConfig Invoke-Native {
+            [pscustomobject]@{ ExitCode = 0; Output = $(if ($ArgumentList -contains '--running') { @('dev') } else { @() }) }
+        }
+    }
+    It 'does not shut down WSL non-interactively' {
+        Mock -ModuleName WslConfig Test-InteractiveSession { $false }
+        Request-WslRestart -Changed $true
+        Should-NotInvoke -ModuleName WslConfig -CommandName Invoke-Native -ParameterFilter { $ArgumentList -contains '--shutdown' }
+        Should-Invoke -ModuleName WslConfig -CommandName Write-Warn -Times 1 -Exactly -ParameterFilter { $Message -eq 'Run wsl --shutdown to apply .wslconfig' }
+    }
+    It 'does nothing when the file did not change' {
+        Request-WslRestart -Changed $false
+        Should-NotInvoke -ModuleName WslConfig -CommandName Invoke-Native
+    }
+    It 'does nothing when no distro is running' {
+        Mock -ModuleName WslConfig Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @('') } }
+        Mock -ModuleName WslConfig Test-InteractiveSession { $true }
+        Request-WslRestart -Changed $true
+        Should-NotInvoke -ModuleName WslConfig -CommandName Invoke-Native -ParameterFilter { $ArgumentList -contains '--shutdown' }
+        Should-NotInvoke -ModuleName WslConfig -CommandName Write-Warn
+    }
+    It 'shuts WSL down after an interactive yes' {
+        Mock -ModuleName WslConfig Test-InteractiveSession { $true }
+        Mock -ModuleName WslConfig Read-Host { 'y' }
+        Request-WslRestart -Changed $true
+        Should-Invoke -ModuleName WslConfig -CommandName Invoke-Native -Times 1 -Exactly -ParameterFilter { $ArgumentList -contains '--shutdown' }
+    }
+    It 'leaves WSL running after an interactive no' {
+        Mock -ModuleName WslConfig Test-InteractiveSession { $true }
+        Mock -ModuleName WslConfig Read-Host { '' }
+        Request-WslRestart -Changed $true
+        Should-NotInvoke -ModuleName WslConfig -CommandName Invoke-Native -ParameterFilter { $ArgumentList -contains '--shutdown' }
+    }
+}
+
+Describe 'Invoke-DotfilesStage' {
+    BeforeEach {
+        $script:ctx = @{ Profiles = @('core'); DistroRoot = 'D:\WSL'; LinuxRepoUrl = 'u'; LinuxRef = 'main'; Plan = $false; Edition = $null }
+        Mock -ModuleName Dotfiles Write-Info {}
+        Mock -ModuleName Dotfiles Write-Ok {}
+        Mock -ModuleName Dotfiles Write-Warn {}
+        Mock -ModuleName Dotfiles Test-IsElevated { $false }
+        Mock -ModuleName Dotfiles Install-PinnedChezmoi {}
+        Mock -ModuleName Dotfiles Invoke-ChezmoiApply { @{ Changed = $true } }
+        Mock -ModuleName Dotfiles Request-WslRestart {}
+    }
+    It 'installs, applies, requests a restart and returns done' {
+        Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'
+        Should-Invoke -ModuleName Dotfiles -CommandName Install-PinnedChezmoi -Times 1 -Exactly -ParameterFilter { $Version -eq '2.74.2' }
+        Should-Invoke -ModuleName Dotfiles -CommandName Invoke-ChezmoiApply -Times 1 -Exactly -ParameterFilter { $DistroRoot -eq 'D:\WSL' }
+        Should-Invoke -ModuleName Dotfiles -CommandName Request-WslRestart -Times 1 -Exactly -ParameterFilter { $Changed -eq $true }
+    }
+    It 'refuses when elevated' {
+        Mock -ModuleName Dotfiles Test-IsElevated { $true }
+        Invoke-DotfilesStage -Context $script:ctx | Should-Be 'failed'
+        Should-NotInvoke -ModuleName Dotfiles -CommandName Install-PinnedChezmoi
+    }
+    It 'changes nothing under -Plan' {
+        Invoke-DotfilesStage -Context $script:ctx -Plan | Should-Be 'done'
+        Should-NotInvoke -ModuleName Dotfiles -CommandName Install-PinnedChezmoi
+        Should-NotInvoke -ModuleName Dotfiles -CommandName Invoke-ChezmoiApply
+    }
+    It 'returns failed when chezmoi apply throws' {
+        Mock -ModuleName Dotfiles Invoke-ChezmoiApply { throw 'boom' }
+        Invoke-DotfilesStage -Context $script:ctx | Should-Be 'failed'
+        Should-NotInvoke -ModuleName Dotfiles -CommandName Request-WslRestart
+    }
+}
