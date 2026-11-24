@@ -5,7 +5,8 @@ BeforeAll {
     $script:Root = Split-Path -Parent $PSScriptRoot
     Import-Module (Join-Path $script:Root 'script/stages/Wsl.psm1') -Force
     $script:Ctx = @{ Profiles = @('core'); DistroRoot = 'D:\WSL'; LinuxRepoUrl = 'https://github.com/istvano/setup-dev-linux-wsl'
-        LinuxRef = 'main'; Plan = $false; Edition = $null }
+        LinuxRef = 'main'; Plan = $false; Edition = $null 
+    }
     $script:Record = @{ Name = 'dev'; BasePath = 'D:\WSL\dev'; Version = 2; DefaultUid = 1000 }
 }
 
