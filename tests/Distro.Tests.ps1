@@ -294,6 +294,19 @@ Describe 'Install-DevDistro' {
         Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
         Should-Invoke -CommandName Write-Warn -ModuleName Distro -ParameterFilter { $Message -like '*set-default-user*' }
     }
+    It 'warns and still asserts the default user when --set-default-user throws' {
+        Mock -ModuleName Distro Write-Warn { }
+        Mock -ModuleName Distro Invoke-Native {
+            $script:Calls.Add(($ArgumentList -join ' '))
+            if ($ArgumentList -contains '--set-default-user') { throw 'wsl.exe exited with code 4294967295. Invalid command line argument' }
+            elseif ($ArgumentList -contains '-un') { [pscustomobject]@{ ExitCode = 0; Output = @('alice') } }
+            elseif ($ArgumentList -contains '-u') { [pscustomobject]@{ ExitCode = 0; Output = @('1000') } }
+            else { [pscustomobject]@{ ExitCode = 0; Output = @() } }
+        }
+        Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
+        Should-Invoke -CommandName Write-Warn -ModuleName Distro -Times 1 -ParameterFilter { $Message -like '*set-default-user*failed*4294967295*' }
+        $script:Calls -contains '-d dev -- id -un' | Should-BeTrue
+    }
     It 'fails with the recovery hint when the effective user is wrong' {
         $script:IdUser = 'root'
         { Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' } |
@@ -318,8 +331,9 @@ Describe 'Install-DevDistro' {
     }
     It 'throws on another cloud-init code, prints output, and still deletes user-data' {
         $script:CloudExit = 1
-        { Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' } |
-            Should-Throw -ExceptionMessage '*cloud-init*1*status: done*wsl --unregister dev*'
+        $msg = try { Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice'; '' } catch { $_.Exception.Message }
+        ($msg -like '*cloud-init*1*status: done*') | Should-BeTrue
+        ([regex]::Matches($msg, [regex]::Escape('wsl --unregister dev'))).Count | Should-Be 1
         Test-Path -LiteralPath (Join-Path $script:HomeDir '.cloud-init\dev.user-data') | Should-BeFalse
     }
     It 'throws with the code when wsl --install fails and deletes user-data' {
@@ -413,6 +427,14 @@ Describe 'Assert-DefaultUser' {
     It 'throws when the effective user differs' {
         Mock -ModuleName Distro Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @('root') } }
         { Assert-DefaultUser -UserName 'alice' } | Should-Throw -ExceptionMessage "*'root'*'alice'*"
+    }
+    It 'ignores wsl: noise before the user name and uid' {
+        Mock -ModuleName Distro Invoke-Native {
+            $noise = 'wsl: A localhost proxy configuration was detected but not mirrored into WSL.'
+            if ($ArgumentList -contains '-un') { [pscustomobject]@{ ExitCode = 0; Output = @($noise, "alice`r") } }
+            else { [pscustomobject]@{ ExitCode = 0; Output = @($noise, "1000`r", '') } }
+        }
+        & { Assert-DefaultUser -UserName 'alice' }
     }
     It 'throws when the uid is below 1000' {
         Mock -ModuleName Distro Invoke-Native {

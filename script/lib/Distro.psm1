@@ -290,7 +290,7 @@ function Install-DevDistro {
         $wait = Invoke-Native -FilePath 'wsl.exe' -AllowExitCode (1..255) -ArgumentList @(
             '-d', $script:DistroName, '-u', 'root', '--', 'cloud-init', 'status', '--wait')
         if ($wait.ExitCode -notin 0, 2) {
-            throw "cloud-init status --wait exited with code $($wait.ExitCode): $($wait.Output -join [Environment]::NewLine) $script:RecoveryHint"
+            throw "cloud-init status --wait exited with code $($wait.ExitCode): $($wait.Output -join [Environment]::NewLine)"
         }
         if ($wait.ExitCode -eq 2) { Write-Warn 'cloud-init finished with recoverable errors; check /var/log/cloud-init.log in dev.' }
 
@@ -299,10 +299,16 @@ function Install-DevDistro {
         # wsl.conf [user] default is not written back to the registry DefaultUid, and
         # .wsl images only update it after OOBE on a first interactive shell.
         # [verify on real machine, Task 13] that --set-default-user exists for .wsl distros.
-        $set = Invoke-Native -FilePath 'wsl.exe' -AllowExitCode (1..255) -ArgumentList @(
-            '--manage', $script:DistroName, '--set-default-user', $UserName)
-        if ($set.ExitCode -ne 0) {
-            Write-Warn "wsl --manage dev --set-default-user was not accepted (exit $($set.ExitCode)); relying on wsl.conf."
+        # wsl.exe reports its own errors (e.g. an unknown option) as exit -1, which
+        # Invoke-Native throws on, so any failure here is only a warning: the
+        # Assert-DefaultUser below is the real gate.
+        try {
+            $set = Invoke-Native -FilePath 'wsl.exe' -AllowExitCode (1..255) -ArgumentList @(
+                '--manage', $script:DistroName, '--set-default-user', $UserName)
+            if ($set.ExitCode -ne 0) { throw "exit $($set.ExitCode)" }
+        }
+        catch {
+            Write-Warn "wsl --manage dev --set-default-user failed ($($_.Exception.Message)); relying on wsl.conf."
         }
         Assert-DefaultUser -UserName $UserName
     }
@@ -319,6 +325,17 @@ function Install-DevDistro {
     $record
 }
 
+function Get-LastResultLine {
+    # Internal. Invoke-Native merges stderr, so notices from wsl.exe, systemd or the
+    # motd can precede the answer. The answer is the last non-empty line that is
+    # not a 'wsl:' notice.
+    param([string[]]$Line)
+    $kept = @($Line | ForEach-Object { "$_".Trim() } |
+            Where-Object { $_ -ne '' -and -not $_.StartsWith('wsl:', [System.StringComparison]::Ordinal) })
+    if ($kept.Count -eq 0) { return '' }
+    $kept[-1]
+}
+
 function Assert-DefaultUser {
     <#
     .SYNOPSIS
@@ -330,12 +347,12 @@ function Assert-DefaultUser {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$UserName)
     $who = Invoke-Native -FilePath 'wsl.exe' -ArgumentList @('-d', $script:DistroName, '--', 'id', '-un')
-    $actual = (($who.Output -join '').Trim())
+    $actual = Get-LastResultLine -Line $who.Output
     if ($actual -ne $UserName) {
         throw "dev starts as '$actual', expected '$UserName': the cloud-init user was not applied as the default user."
     }
     $uidOut = Invoke-Native -FilePath 'wsl.exe' -ArgumentList @('-d', $script:DistroName, '--', 'id', '-u')
-    $uidText = (($uidOut.Output -join '').Trim())
+    $uidText = Get-LastResultLine -Line $uidOut.Output
     $uid = 0
     if (-not [int]::TryParse($uidText, [ref]$uid) -or $uid -lt 1000) {
         throw "dev default user '$UserName' has uid '$uidText'; expected an integer >= 1000."
