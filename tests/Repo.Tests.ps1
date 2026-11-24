@@ -57,7 +57,7 @@ Describe 'Repository invariants' {
     # Windows PowerShell 5.1 reads a BOM-less file as the ANSI code page, so any
     # non-ASCII byte in a file it reads can corrupt it (W3). Skipped per file
     # while the file does not exist yet.
-    It 'ASCII-only file <_> (read by Windows PowerShell 5.1)' -ForEach @('bootstrap.ps1', 'script/lib/pins.psd1') {
+    It 'ASCII-only file <_> (read by Windows PowerShell 5.1)' -ForEach @('bootstrap.ps1', 'script/lib/pins.psd1', 'wsl/ubuntu.lock.psd1') {
         $path = Join-Path $script:Root $_
         if (-not (Test-Path -LiteralPath $path)) {
             Set-ItResult -Skipped -Because "$_ does not exist yet"
