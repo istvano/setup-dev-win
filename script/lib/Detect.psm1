@@ -1,3 +1,4 @@
+#Requires -Version 7.6
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -7,14 +8,16 @@ function Get-EditionInfo {
     .SYNOPSIS
         Returns the Windows edition and whether it is Home or Pro.
     .DESCRIPTION
-        Core maps to Home and Professional to Pro; any other value is neither and
-        the caller decides. The two strings are to be verified on the real machine
-        and recorded in ADR-008.
+        Reads EditionID from the registry (no elevation needed; Get-WindowsEdition
+        is a DISM cmdlet that requires it). Core maps to Home and Professional to
+        Pro; any other value is neither and the caller decides. The two strings are
+        to be verified on the real machine (ADR-008).
     #>
     [CmdletBinding()]
     [OutputType([hashtable])]
     param()
-    $edition = [string](Get-WindowsEdition -Online).Edition
+    $key = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+    $edition = [string](Get-ItemProperty -Path $key).EditionID
     @{
         Edition = $edition
         IsHome = ($edition -eq 'Core')

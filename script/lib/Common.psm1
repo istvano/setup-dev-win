@@ -1,3 +1,4 @@
+#Requires -Version 7.6
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -146,6 +147,18 @@ function Resolve-ElevatedScriptPath {
     return $full
 }
 
+function ConvertTo-CommandLineArgument {
+    # Internal. Quotes one token per CommandLineToArgvW rules: wrap in double
+    # quotes, double backslashes that precede a quote (or the closing quote),
+    # escape embedded quotes. Start-Process -ArgumentList does no quoting itself.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    $escaped = [regex]::Replace($Value, '(\\*)"', { param($m) $m.Groups[1].Value + $m.Groups[1].Value + '\"' })
+    $escaped = [regex]::Replace($escaped, '(\\+)$', { param($m) $m.Value + $m.Value })
+    return '"' + $escaped + '"'
+}
+
 function Invoke-ElevatedScript {
     <#
     .SYNOPSIS
@@ -154,6 +167,12 @@ function Invoke-ElevatedScript {
         Bare script name, without directory or extension.
     .PARAMETER ArgumentList
         Arguments passed to the script after -File <path>.
+    .NOTES
+        Every token is quoted into one argument string (Start-Process would join an
+        array with bare spaces). The running pwsh is elevated by absolute path, so
+        a pwsh planted on PATH is never used. A declined UAC prompt makes
+        Start-Process throw; the error is not caught here and the caller must
+        handle it.
     #>
     [CmdletBinding()]
     [OutputType([int])]
@@ -162,8 +181,9 @@ function Invoke-ElevatedScript {
         [string[]]$ArgumentList = @()
     )
     $path = Resolve-ElevatedScriptPath -Name $Name
-    $arguments = @('-NoProfile', '-File', $path) + $ArgumentList
-    $process = Start-Process -FilePath 'pwsh' -Verb RunAs -Wait -PassThru -ArgumentList $arguments
+    $tokens = @('-NoProfile', '-File', $path) + $ArgumentList
+    $arguments = ($tokens | ForEach-Object { ConvertTo-CommandLineArgument -Value $_ }) -join ' '
+    $process = Start-Process -FilePath ([Environment]::ProcessPath) -Verb RunAs -Wait -PassThru -ArgumentList $arguments
     return [int]$process.ExitCode
 }
 

@@ -14,7 +14,6 @@ function Initialize-WindowsStub {
     [CmdletBinding()]
     param()
     $stubs = @{
-        'Get-WindowsEdition' = { [CmdletBinding()] param([switch]$Online) throw 'stub: mock me' }
         'Get-Volume' = { [CmdletBinding()] param([char]$DriveLetter) throw 'stub: mock me' }
         'Get-CimInstance' = { [CmdletBinding()] param([string]$ClassName, [string]$Namespace) throw 'stub: mock me' }
     }

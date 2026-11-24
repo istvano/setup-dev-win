@@ -82,4 +82,7 @@ Status: accepted. Spec section 6.4.
 `Microsoft-Hyper-V-All` is enabled only when the `lab` profile is selected AND the
 edition is Pro, which keeps the default attack surface smaller and Home working.
 `Containers-DisposableClientVM` (Sandbox) is never touched. Capabilities are detected,
-never assumed.
+never assumed. The edition is read from the `EditionID` registry value under
+`HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion` (`Core` = Home, `Professional` =
+Pro): `Get-WindowsEdition` is a DISM cmdlet that needs elevation, and admin-only
+cmdlets stay inside `script/elevated/`.

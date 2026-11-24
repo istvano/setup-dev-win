@@ -77,8 +77,39 @@ Describe 'Invoke-ElevatedScript' {
         Mock -ModuleName Common Start-Process { [pscustomobject]@{ ExitCode = 7 } }
         Invoke-ElevatedScript -Name 'x' -ArgumentList @('-A') | Should-Be 7
         Should-Invoke -CommandName Start-Process -ModuleName Common -Exactly -Times 1 -ParameterFilter {
-            $FilePath -eq 'pwsh' -and $Verb -eq 'RunAs' -and $Wait -and $PassThru -and
-            ($ArgumentList -join '|') -eq '-NoProfile|-File|/fake/script/elevated/x.ps1|-A'
+            $FilePath -eq [Environment]::ProcessPath -and $Verb -eq 'RunAs' -and $Wait -and $PassThru -and
+            @($ArgumentList).Count -eq 1 -and
+            $ArgumentList -ceq '"-NoProfile" "-File" "/fake/script/elevated/x.ps1" "-A"'
+        }
+    }
+
+    It 'quotes a script path and an argument that contain spaces' {
+        Mock -ModuleName Common Resolve-ElevatedScriptPath { 'C:\Users\John Smith\repo\script\elevated\x.ps1' }
+        Mock -ModuleName Common Start-Process { [pscustomobject]@{ ExitCode = 0 } }
+        $null = Invoke-ElevatedScript -Name 'x' -ArgumentList @('-Root', 'D:\My WSL\')
+        Should-Invoke -CommandName Start-Process -ModuleName Common -Exactly -Times 1 -ParameterFilter {
+            $ArgumentList -ceq '"-NoProfile" "-File" "C:\Users\John Smith\repo\script\elevated\x.ps1" "-Root" "D:\My WSL\\"'
+        }
+    }
+
+    It 'lets a declined UAC prompt surface as a terminating error' {
+        Mock -ModuleName Common Resolve-ElevatedScriptPath { '/fake/x.ps1' }
+        Mock -ModuleName Common Start-Process { throw 'The operation was canceled by the user.' }
+        { Invoke-ElevatedScript -Name 'x' } | Should-Throw -ExceptionMessage '*canceled*'
+    }
+}
+
+Describe 'ConvertTo-CommandLineArgument' {
+    It 'quotes <Name>' -ForEach @(
+        @{ Name = 'a plain value'; Value = 'abc'; Expected = '"abc"' }
+        @{ Name = 'a space'; Value = 'D:\My WSL'; Expected = '"D:\My WSL"' }
+        @{ Name = 'an embedded quote'; Value = 'a"b'; Expected = '"a\"b"' }
+        @{ Name = 'backslashes before a quote'; Value = 'a\"b'; Expected = '"a\\\"b"' }
+        @{ Name = 'a trailing backslash'; Value = 'D:\My WSL\'; Expected = '"D:\My WSL\\"' }
+        @{ Name = 'an empty string'; Value = ''; Expected = '""' }
+    ) {
+        InModuleScope Common -Parameters @{ Value = $Value; Expected = $Expected } {
+            ConvertTo-CommandLineArgument -Value $Value | Should-BeString $Expected
         }
     }
 }

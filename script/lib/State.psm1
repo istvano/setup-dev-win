@@ -1,3 +1,4 @@
+#Requires -Version 7.6
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -92,7 +93,7 @@ function Set-StageResult {
     $temp = "$path.$([guid]::NewGuid().ToString('N')).tmp"
     try {
         Set-Content -LiteralPath $temp -Value $json -Encoding utf8NoBOM
-        Move-Item -LiteralPath $temp -Destination $path -Force
+        [System.IO.File]::Move($temp, $path, $true)
     }
     finally {
         if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }

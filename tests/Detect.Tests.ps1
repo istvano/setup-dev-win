@@ -13,7 +13,7 @@ Describe 'Get-EditionInfo' {
         @{ Edition = 'Professional'; IsHome = $false; IsPro = $true }
         @{ Edition = 'Enterprise'; IsHome = $false; IsPro = $false }
     ) {
-        Mock -ModuleName Detect Get-WindowsEdition { [pscustomobject]@{ Edition = $Edition } }
+        Mock -ModuleName Detect Get-ItemProperty { [pscustomobject]@{ EditionID = $Edition } } -ParameterFilter { $Path -eq 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' }
         $info = Get-EditionInfo
         $info.Edition | Should-Be $Edition
         $info.IsHome | Should-Be $IsHome
