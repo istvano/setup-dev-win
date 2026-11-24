@@ -288,6 +288,7 @@ function Install-DevDistro {
         $installed = $true
 
         # Exit 2 = done with recoverable errors. [verify on real machine, Task 13]
+        Write-Info 'Waiting for cloud-init to finish (this can take a minute)...'
         $wait = Invoke-Native -FilePath 'wsl.exe' -AllowExitCode (1..255) -ArgumentList @(
             '-d', $script:DistroName, '-u', 'root', '--', 'cloud-init', 'status', '--wait')
         if ($wait.ExitCode -notin 0, 2) {

@@ -15,7 +15,8 @@ foreach ($stageModule in Get-ChildItem -LiteralPath (Join-Path (Split-Path -Pare
 
 $script:StageOrder = @('preflight', 'features', 'dotfiles', 'wsl', 'verify')
 $script:ValidProfiles = @('core', 'lab')
-$script:RebootMessage = 'Reboot, then run script\setup.ps1 again.'
+# pwsh -File: the default shell is Windows PowerShell 5.1, which cannot run setup.ps1.
+$script:RebootMessage = 'Reboot, then run pwsh -File script\setup.ps1 again (or powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1).'
 # bootstrap.ps1 carries the same text; keep the two identical.
 $script:ElevatedRefusal = 'Run from a normal (non-elevated) terminal; elevation is requested per step.'
 

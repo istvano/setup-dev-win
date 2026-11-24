@@ -119,7 +119,7 @@ Describe 'Invoke-WslStage' {
     It 'returns failed with the exit code when the handoff fails' {
         Mock -ModuleName Wsl Invoke-LinuxHandoff { 1 }
         Invoke-WslStage -Context $script:Ctx | Should-Be 'failed'
-        Should-Invoke -CommandName Write-Warn -ModuleName Wsl -ParameterFilter { $Message -like '*exit code 1*' }
+        Should-Invoke -CommandName Write-Warn -ModuleName Wsl -ParameterFilter { $Message -like '*exit code 1*re-run pwsh -File script\setup.ps1 -Stage wsl*' }
     }
 
     It 'with -Plan prints the steps and touches nothing' {

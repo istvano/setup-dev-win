@@ -93,7 +93,7 @@ function Invoke-WslStage {
         return 'failed'
     }
     if ($code -ne 0) {
-        Write-Warn "The Linux bootstrap failed (exit code $code). Fix the cause and re-run script\setup.ps1; the handoff is idempotent."
+        Write-Warn "The Linux bootstrap failed (exit code $code). Fix the cause and re-run pwsh -File script\setup.ps1 -Stage wsl; the handoff is idempotent."
         return 'failed'
     }
     return 'done'

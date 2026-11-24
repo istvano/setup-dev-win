@@ -115,6 +115,12 @@ Describe 'Install-PinnedChezmoi' {
             $ArgumentList[([array]::IndexOf($ArgumentList, '--scope') + 1)] -eq 'user'
         }
     }
+    It 'says before the winget install that it can take a while' {
+        Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { $null }
+        Install-PinnedChezmoi -Version '2.74.2'
+        Should-Invoke -ModuleName WslConfig -CommandName Write-Info -Times 1 -Exactly -ParameterFilter {
+            $Message -eq 'Installing chezmoi 2.74.2 with winget (this can take a minute)...' }
+    }
     It 'returns nothing on the pipeline' {
         Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { $null }
         @(Install-PinnedChezmoi -Version '2.74.2').Count | Should-Be 0

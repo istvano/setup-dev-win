@@ -77,7 +77,7 @@ Describe 'Invoke-SetupRun' {
         Mock -ModuleName Runner Invoke-FeaturesStage { 'reboot-required' }
         Invoke-SetupRun | Should-Be 3010
         Get-StageResult -Stage 'features' | Should-Be 'reboot-required'
-        ($script:Warned -join ' ') | Should-BeLikeString -Expected '*Reboot, then run script\setup.ps1 again.*'
+        ($script:Warned -join ' ') | Should-BeLikeString -Expected '*Reboot, then run pwsh -File script\setup.ps1 again (or powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1).*'
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-DotfilesStage
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-WslStage
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-VerifyStage

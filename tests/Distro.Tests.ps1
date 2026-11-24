@@ -265,6 +265,12 @@ Describe 'Install-DevDistro' {
         $script:Calls[4] | Should-Be '-d dev -- id -un'
         $script:Calls[5] | Should-Be '-d dev -- id -u'
     }
+    It 'says it is waiting for cloud-init right before the wait' {
+        Mock -ModuleName Distro Write-Info { if ($Message -eq 'Waiting for cloud-init to finish (this can take a minute)...') { $script:CallsAtWait = $script:Calls.Count } }
+        $script:CallsAtWait = -1
+        Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
+        $script:CallsAtWait | Should-Be 1
+    }
     It 'writes user-data before the install and deletes it after' {
         Install-DevDistro -ImagePath 'C:\i.wsl' -Root 'D:\WSL' -UserName 'alice' | Out-Null
         $script:UserDataSeen | Should-BeTrue

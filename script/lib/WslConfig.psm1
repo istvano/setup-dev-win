@@ -50,7 +50,8 @@ function Install-PinnedChezmoi {
         return
     }
     if (-not $PSCmdlet.ShouldProcess("chezmoi $Version", 'winget install')) { return }
-    Write-Info "Installing chezmoi $Version"
+    # winget's output is captured, so say up front that the wait is expected.
+    Write-Info "Installing chezmoi $Version with winget (this can take a minute)..."
     $arguments = @(
         'install', '--id', 'twpayne.chezmoi', '--source', 'winget', '--exact',
         '--version', $Version, '--scope', 'user', '--silent',

@@ -203,6 +203,8 @@ Describe 'Invoke-FeaturesStage' {
         Should-Invoke -ModuleName Features -CommandName Invoke-ElevatedScript -Times 1 -Exactly -ParameterFilter {
             $Name -eq 'Enable-Features' -and $ArgumentList -contains 'VirtualMachinePlatform'
         }
+        # Other prompts (the wsl.exe installer) are not this repo's; the wording says so.
+        Should-Invoke -ModuleName Features -CommandName Write-Info -ParameterFilter { $Message -like '*(one UAC prompt from this repo)' }
     }
 
     It 'returns reboot-required when the elevated script exits 3010' {
