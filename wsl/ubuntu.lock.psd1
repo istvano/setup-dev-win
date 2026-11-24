@@ -1,4 +1,4 @@
-# Pinned WSL distro image. ASCII-only: Windows PowerShell 5.1 may read this file (W3).
+# Pinned WSL distro image. ASCII-only: Windows PowerShell 5.1 may read this file (AGENTS.md).
 # Values copied from the Ubuntu-26.04 Amd64Url entry of Source; the SHA256 was also
 # confirmed by downloading the file and hashing it.
 @{

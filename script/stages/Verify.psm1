@@ -113,7 +113,7 @@ function Invoke-VerifyChecks {
                 Assert-DistroPlacement -Distro $record -Root $root
                 $expectedUser = if ($linuxUser) { $linuxUser } else { Get-LinuxUserName }
                 Assert-DefaultUser -UserName $expectedUser
-                # Informational only: the registry value is unreliable for .wsl images (W16).
+                # Informational only: the registry value is unreliable for .wsl images (ADR-011).
                 Write-Host "     registry DefaultUid: $($record.DefaultUid)"
             }))
 

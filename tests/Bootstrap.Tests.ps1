@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # Stage-0 tests. They run under pwsh locally and under Windows PowerShell 5.1 in
-# CI (W8), so this file avoids syntax that 5.1 does not have.
+# CI, so this file avoids syntax that 5.1 does not have.
 BeforeAll {
     $script:Root = Split-Path -Parent $PSScriptRoot
     $script:Bootstrap = Join-Path $script:Root 'bootstrap.ps1'

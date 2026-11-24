@@ -7,21 +7,49 @@ Runbook for milestone 1: from a fresh Windows 11 x64 machine to a working WSL2 d
 ## New machine
 
 1. Sign in once; winget registers only after the first interactive login.
-2. `winget install --id Git.Git -e --source winget`
+2. `winget install --id Git.Git -e --source winget`, then open a new terminal: the
+   installer changes PATH for new processes only, so `git` is not found in the old one.
 3. `git clone` this repository to a path of your choice.
-4. `powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1` (Windows PowerShell 5.1,
-   process-scope bypass only; `Set-ExecutionPolicy` is never called).
+4. `powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1` from a normal (not
+   elevated) terminal (Windows PowerShell 5.1, process-scope bypass only;
+   `Set-ExecutionPolicy` is never called). An elevated launch is refused.
 
-Stage-0 checks the OS, installs the pinned PowerShell 7 through winget and hands off to
-`script\setup.ps1`, which runs `preflight`, `features`, `dotfiles`, `wsl` and `verify`.
-Options: `-Profiles core,lab`, `-DistroRoot D:\WSL`, `-LinuxRef <ref>`, `-Plan` (show
-what would change, change nothing), `-Stage <name>` (run one stage).
+Stage-0 checks the OS, installs PowerShell 7.6 through winget when no accepted 7.6 is
+present (ADR-014) and hands off to `script\setup.ps1`, which runs `preflight`,
+`features`, `dotfiles`, `wsl` and `verify`. Options: `-Profiles core,lab`,
+`-DistroRoot D:\WSL`, `-LinuxUser <name>`, `-LinuxRef <ref>`, `-Plan` (show what would
+change, change nothing), `-Stage <name>` (run one stage).
+
+`-Profiles`, `-DistroRoot` and `-LinuxUser` are remembered in `state.json` (ADR-015): a
+flag you pass wins and is kept; a later run without it uses the kept value; the first
+run without it uses the default (`core`, `D:\WSL`, and your Windows user name lowercased
+with invalid characters removed, printed as `Linux user: <name>` before the distro is
+installed). Pass the flag again to change a choice. `-Plan` changes nothing, including
+the kept choices.
+
+### UAC prompts
+
+The repository elevates only through `script/elevated/` (ADR-004). Expect these
+prompts on a first run, each from the source named:
+
+| Prompt | Source |
+|---|---|
+| Git installer | README step 2 (`winget install Git.Git`), before this repository runs |
+| PowerShell MSI | stage-0, when PowerShell 7.6 must be installed (machine-wide MSI, ADR-014) |
+| Enable Windows features | this repository: `script/elevated/Enable-Features.ps1`, one prompt for all missing features |
+| `wsl --install --no-distribution` | wsl.exe elevates itself when WSL is missing or too old |
+| `wsl --update` | possibly, when wsl.exe elevates itself to update |
+
+A re-run with everything in place raises none of them.
 
 Things to expect:
 
 - `features` enables `VirtualMachinePlatform` (and Hyper-V with `lab` on Pro) from one
-  elevated pwsh: exactly one UAC prompt. Feature state is read through CIM without
-  elevation. If a restart is needed the run exits 3010; see "After a reboot".
+  elevated pwsh: one UAC prompt from this repository. Feature state is read through
+  CIM without elevation. The elevated window closes when it ends, so its `[warn]` and
+  `[fail]` lines are also appended to `%LOCALAPPDATA%\setup-dev-win\elevated.log`, and
+  the stage prints the new ones after a failure. If a restart is needed the run exits
+  3010; see "After a reboot".
 - `dotfiles` installs the pinned chezmoi and applies `.wslconfig` (sections `[wsl2]`,
   `[general]`, `[experimental]`). An existing, different `.wslconfig` is backed up to
   `.wslconfig.backup.<timestamp>` first. Run non-elevated.
@@ -32,16 +60,26 @@ Things to expect:
 
 ## After a reboot
 
-When a run ends with `Reboot, then run script\setup.ps1 again.` (exit 3010), restart
-Windows and run `script\setup.ps1` again. Nothing resumes automatically (ADR-005). The
-runner skips stages recorded as done, resumes the one that asked for the reboot only
-once the machine has actually rebooted since, and always re-runs `verify`.
+When a run ends with `Reboot, then run pwsh -File script\setup.ps1 again ...` (exit
+3010), restart Windows and run, from the repository root in a normal terminal:
+
+```powershell
+pwsh -File script\setup.ps1
+```
+
+`pwsh -File` matters: the default Windows shell is Windows PowerShell 5.1, which cannot
+run `script\setup.ps1`. Re-running `powershell -ExecutionPolicy Bypass -File
+.\bootstrap.ps1` also works; it skips the PowerShell install and hands off again.
+Nothing resumes automatically (ADR-005). The runner skips stages recorded as done,
+resumes the one that asked for the reboot only once the machine has actually rebooted
+since, and always re-runs `verify`. The same command resumes after a failure.
 
 ## Verify
 
-`pwsh -File script\verify.ps1 [-DistroRoot D:\WSL] [-Profiles core]` runs the same checks
-as the verify stage with no state file; exit 0 when all pass, 1 otherwise. Every failure
-is shown, not just the first.
+`pwsh -File script\verify.ps1 [-DistroRoot D:\WSL] [-Profiles core] [-LinuxUser <name>]`
+runs the same checks as the verify stage without the runner; exit 0 when all pass, 1
+otherwise. Without a flag it uses the choice `setup.ps1` kept in `state.json`, else the
+default; it never writes. Every failure is shown, not just the first.
 
 1. Windows build is at least `MinOsBuild`; the edition is reported.
 2. Required features are `Enabled`; Hyper-V is `Disabled` or `Absent` unless `lab`.
@@ -51,7 +89,7 @@ is shown, not just the first.
    with uid >= 1000.
 6. `~/workspace/setup-dev-linux-wsl/script/verify` exits 0 inside `dev` (its output is
    shown). If it says chezmoi is not initialised, the Linux bootstrap never completed:
-   re-run `script\setup.ps1 -Stage wsl`.
+   re-run `pwsh -File script\setup.ps1 -Stage wsl`.
 7. Informational only: Kernel DMA Protection state and `systemctl is-system-running`
    in `dev` (`running` and `degraded` are normal).
 
@@ -62,7 +100,7 @@ Back up, remove and rebuild the distro (this destroys its filesystem):
 ```powershell
 wsl --export dev <root>\backup\dev.tar
 wsl --unregister dev
-script\setup.ps1 -Stage wsl
+pwsh -File script\setup.ps1 -Stage wsl
 ```
 
 `<root>` is the distro root (default `D:\WSL`); create `<root>\backup` first. Restore
@@ -98,6 +136,96 @@ run the `wsl` stage reads `passwd -S <user>` as root: status `L` (locked) or `NP
 starts an interactive `passwd` (typed into passwd, never through this script); `P` skips
 it. A non-interactive run only warns and prints the command to run later:
 `wsl -d dev -u root -- passwd <user>`.
+
+Be clear about what this password protects. WSL interop is on, so any process in the
+distro can run `wsl.exe -u root` and become root without it: `sudo` inside WSL is not a
+security boundary (spec 6.9, ADR-012). The password exists for parity with a normal
+Linux machine and to stop accidents. Hostile work belongs in a Hyper-V VM.
+
+## Wrong Linux user
+
+If your Windows user name does not make a valid Linux name, the wsl stage stops and
+asks for one: `pwsh -File script\setup.ps1 -LinuxUser <name>`. If `dev` already exists
+with another user, the default-user check fails with `dev starts as '<x>', expected
+'<y>'`; either pass `-LinuxUser <x>` or rebuild with `wsl --unregister dev`, then
+`pwsh -File script\setup.ps1 -Stage wsl` (this destroys the distro's filesystem).
+
+## Handoff failures
+
+The `wsl` stage clones `setup-dev-linux-wsl` into `~/workspace/setup-dev-linux-wsl`
+inside `dev` and runs its bootstrap at the requested ref (ADR-013). It never runs stale
+or foreign code silently; instead it stops with one of these:
+
+- `existing clone points at <url>, expected <url>`: the clone's `remote.origin.url` is
+  another repository. Inspect it (`wsl -d dev -- git -C ~/workspace/setup-dev-linux-wsl
+  remote -v`); if it is not yours, move it aside or delete it, then re-run
+  `pwsh -File script\setup.ps1 -Stage wsl`. If it is a fork you mean to use, pass
+  `-LinuxRepoUrl <its https URL>`.
+- `unknown ref <ref>`: neither `origin/<ref>` nor a tag or commit `<ref>` exists after
+  fetching. Check the spelling of `-LinuxRef` (default `main`).
+- git's own `Your local changes ... would be overwritten by checkout`: you edited files
+  in the clone. Commit, stash or discard them inside `dev`, then re-run.
+- `git is still missing in dev after installing it`: `apt-get install git` as root
+  failed; its output is above. Fix the distro's network or apt sources and re-run.
+
+A non-zero exit from the Linux bootstrap itself is reported with its exit code; fix the
+cause it printed and re-run `pwsh -File script\setup.ps1 -Stage wsl`.
+
+## Milestone 1 acceptance
+
+Task 13: the operator's run on the real machine (Windows 11 x64, build 26100 or later),
+after CI is green. It answers what CI and mocks cannot. Record each answer (value, exit
+code, message) next to the item, and update the matching `[verify on real machine]`
+comment in the code where one exists.
+
+Stage-0 and elevation:
+
+- [ ] PowerShell: which installer winget chose (expect `wix`, the MSI) and where pwsh
+      landed (expect `C:\Program Files\PowerShell\7\pwsh.exe`).
+- [ ] Version floor: with a later 7.6 patch installed than `pins.psd1`, stage-0 skips
+      the install and hands off to it.
+- [ ] Elevation by `[Environment]::ProcessPath` works: the features stage's elevated
+      pwsh starts from that path and runs `Enable-Features.ps1`.
+- [ ] Each UAC prompt and its source, against the table in "UAC prompts".
+- [ ] Stage-0 returns promptly once `setup.ps1` exits (no hang on wslhost or another
+      long-lived child).
+- [ ] An elevated launch of `bootstrap.ps1` and of `script\setup.ps1` is refused with
+      `Run from a normal (non-elevated) terminal; elevation is requested per step.`
+- [ ] `%LOCALAPPDATA%\setup-dev-win\elevated.log` gets a timestamped `[fail]` line on a
+      forced failure: in an elevated terminal run
+      `pwsh -File script\elevated\Enable-Features.ps1 -Name Bogus` (expect exit 2 and
+      `[fail] Refusing feature 'Bogus'` in the log). Also note whether the features
+      stage prints the new lines after a real failed run.
+
+Windows features and WSL:
+
+- [ ] `wsl --version` on the inbox stub (before WSL is installed) returns without
+      waiting for a keypress.
+- [ ] Exit codes of `wsl --install --no-distribution` and `wsl --update` before the
+      reboot.
+- [ ] `Win32_OptionalFeature` `InstallState` read as a standard (non-elevated) user, for
+      a feature that is enabled, one pending a restart and one disabled.
+- [ ] `EditionID` strings for Home and Pro (`Core`, `Professional`).
+
+The dev distro:
+
+- [ ] Lxss registry value names: `DistributionName`, `BasePath`, `Version`, `DefaultUid`.
+- [ ] Registry `DefaultUid` before and after `wsl --manage dev --set-default-user`, and
+      whether that option exists in the installed WSL.
+- [ ] `cloud-init status --wait` exit codes seen (0, 2).
+- [ ] A duplicate `[boot]` section in `/etc/wsl.conf` is harmless (systemd still on).
+- [ ] Whether Ubuntu's out-of-box experience appears on the first interactive
+      `wsl -d dev`.
+- [ ] `passwd -S <user>` output format (status in the second field: `L`, `NP`, `P`).
+- [ ] git is present in the image before the handoff (or the probe installs it).
+- [ ] `wsl -d dev --cd ~ -- bash -c '...' handoff <url> <ref>` passes the rest of the
+      line to the user's shell intact: the handoff quoting holds.
+
+Dotfiles and verify:
+
+- [ ] `chezmoi verify` works without `--promptString` after the dotfiles stage's init.
+- [ ] `pwsh -File script\verify.ps1` passes with no flags after setup (it reads the kept
+      choices).
 
 ## Running the gate
 

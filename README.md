@@ -15,13 +15,15 @@ defaults and hardening are listed in `TASKS.md`.
 On a fresh Windows 11 x64 machine:
 
 1. Sign in once (winget's App Installer registers only after first interactive login).
-2. `winget install --id Git.Git -e --source winget`
+2. `winget install --id Git.Git -e --source winget`, then open a new terminal (so `git` is on PATH).
 3. `git clone` this repository to a path of your choice (`D:\src\setup-dev-win` is suggested; nothing depends on it).
-4. `powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1`
+4. `powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1` from a normal (not elevated) terminal.
 
-Re-run `script\setup.ps1` after a reboot or a failure; stages are idempotent. Check the
-result at any time, read-only, with `pwsh -File script\verify.ps1` (exit 0 = all good).
-See `docs/OPERATIONS.md`.
+After a reboot or a failure, re-run `pwsh -File script\setup.ps1` (or step 4 again);
+stages are idempotent and `-Profiles`, `-DistroRoot` and `-LinuxUser` are remembered.
+Check the result at any time, read-only, with `pwsh -File script\verify.ps1` (exit 0 =
+all good). Expect a few UAC prompts on the first run (Git, the PowerShell MSI, enabling
+Windows features, the WSL installer). See `docs/OPERATIONS.md`.
 
 ## Principles
 

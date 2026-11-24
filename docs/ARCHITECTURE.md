@@ -17,23 +17,40 @@ beyond first boot.
 
 ## Stage flow
 
-Stage-0 (`bootstrap.ps1`, Windows PowerShell 5.1) checks the OS, winget and PowerShell 7,
-installs the pinned PowerShell 7 and hands off to `script/setup.ps1` under `pwsh`. It
-never calls `Set-ExecutionPolicy` (the operator launches it with a process-scope Bypass).
-`setup` is a thin entry point; `script/lib/Runner.psm1` runs the stages in order, keeping
-results in `%LOCALAPPDATA%\setup-dev-win\state.json`, and seeds `Context.Edition` from
-`Get-EditionInfo` (a registry read) so a re-run that skips preflight still has it.
+Stage-0 (`bootstrap.ps1`, Windows PowerShell 5.1) refuses an elevated launch, checks
+the OS and winget, installs PowerShell 7.6 as the machine-wide MSI unless an installed
+7.6.x at or above the `pins.psd1` floor is present (ADR-014), and hands off to
+`script/setup.ps1` under `pwsh`, waiting for that process only (not its descendants).
+It never calls `Set-ExecutionPolicy` (the operator launches it with a process-scope
+Bypass). `setup` is a thin entry point; `script/lib/Runner.psm1` runs the stages in
+order, keeping results in `%LOCALAPPDATA%\setup-dev-win\state.json`, and seeds
+`Context.Edition` from `Get-EditionInfo` (a registry read) so a re-run that skips
+preflight still has it. The same file keeps the operator's choices (`profiles`,
+`distroRoot`, `linuxUser`): an explicit flag wins and is kept, else the kept value, else
+the default (ADR-015).
 
 | Stage | Does | Elevation |
 |---|---|---|
 | preflight | edition, build, data volume, Documents not redirected, virtualization, Kernel DMA state | none |
-| features | enable `VirtualMachinePlatform` (Hyper-V only with `lab` on Pro); state read via CIM | one UAC prompt, `script/elevated/` only |
+| features | enable `VirtualMachinePlatform` (Hyper-V only with `lab` on Pro, refused on Home); state read via CIM | one UAC prompt from this repo (`script/elevated/`); `wsl --install`/`--update` raise their own |
 | dotfiles | pinned chezmoi, apply `.wslconfig`, offer `wsl --shutdown` | refuses to run elevated |
 | wsl | verified image, install `dev`, default user, password, handoff to the Linux repo | none |
 | verify | read-only checks, always run (see OPERATIONS) | none |
 
-Exit 3010 means reboot required; the operator re-runs. Elevated work lives only under
-`script/elevated/` and is allowlisted by name.
+Exit 3010 means reboot required; the operator re-runs `pwsh -File script\setup.ps1`.
+Elevated work lives only under `script/elevated/` and is allowlisted by name; its
+`[warn]`/`[fail]` lines also go to `%LOCALAPPDATA%\setup-dev-win\elevated.log`, which the
+features stage prints after a failure (ADR-010).
+
+UAC prompts on a first run, by source: the Git installer (README step 2, before this
+repository runs); the PowerShell MSI (stage-0); `Enable-Features.ps1` (the only
+elevation this repository performs, through `script/elevated/`); `wsl --install
+--no-distribution`, which elevates itself; possibly `wsl --update`. The repository
+itself elevates only through `script/elevated/` (ADR-004). See OPERATIONS.
+
+The handoff runs a fixed bash program inside `dev` that refuses a clone with a foreign
+origin, resolves the ref before checking it out and never falls back to stale code
+(ADR-013).
 
 `.wslconfig` is rendered from `chezmoi/dot_wslconfig.tmpl`: `[wsl2]` memory, processors,
 swap, networkingMode=nat, localhostForwarding, firewall, telemetry=false; `[general]`
@@ -41,7 +58,8 @@ distributionInstallPath; `[experimental]` sparseVhd, autoMemoryReclaim. A key in
 section is silently ignored by WSL, so the tests assert each key's section.
 
 `script/verify.ps1` and the verify stage share `Invoke-VerifyChecks`
-(`script/stages/Verify.psm1`); the script adds no runner and no state.
+(`script/stages/Verify.psm1`); the script (`Invoke-VerifyCommand`) adds no runner, reads
+the kept choices when its flags are absent and writes nothing.
 
 ## Ownership
 

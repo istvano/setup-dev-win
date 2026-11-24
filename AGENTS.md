@@ -19,8 +19,9 @@ These are deliberate defaults, not placeholders:
   build number, never a version name. Home must not break; Pro adds features.
 - Never write a capability claim that is true of only one machine or edition.
   Detect it (edition, virtualization, nested virtualization) rather than remember it.
-- Language: scripts under `script/` target PowerShell 7.6 (pinned 7.6.6, LTS).
-  `bootstrap.ps1` alone runs on Windows PowerShell 5.1.
+- Language: scripts under `script/` target PowerShell 7.6 LTS. `pins.psd1` holds a
+  floor within 7.6 (any 7.6.x at or above it is accepted; installed as the MSI,
+  ADR-014). `bootstrap.ps1` alone runs on Windows PowerShell 5.1.
 - Package manager: winget ONLY. Scoop and Chocolatey are rejected (ADR-002).
 - Configuration engine: chezmoi (`.chezmoiroot` points at `chezmoi/`).
 - Distro: name `dev`, installed at `<root>\dev` (default root `D:\WSL`), image

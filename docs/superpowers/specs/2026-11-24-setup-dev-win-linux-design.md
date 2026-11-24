@@ -1,5 +1,21 @@
 # setup-dev-win + setup-dev-linux-wsl: design
 
+> **Superseded by implementation (milestone 1, 2026-11-24).** The body below is kept as
+> written. Where it disagrees with the code, the code and `docs/DECISIONS.md` win:
+>
+> | Stale statement in this document | What was implemented | Decision |
+> |---|---|---|
+> | Edition read with `Get-WindowsEdition -Online` | `EditionID` registry value (DISM cmdlet needs elevation) | ADR-008 |
+> | Feature state from `Get-WindowsOptionalFeature`; `Enable-Features.ps1 -CheckOnly`; re-read after enabling | `Win32_OptionalFeature` through CIM, non-elevated; the elevated script only enables; its exit code is the result | ADR-010 |
+> | `script/lib/Features.psm1` | `script/lib/WindowsFeatures.psm1` (the name clashed with `script/stages/Features.psm1` under Pester) | ADR-010 |
+> | Stage-0 calls `Set-ExecutionPolicy` | Never called; launched with `-ExecutionPolicy Bypass` | ADR-003 |
+> | Exact PowerShell pin `7.6.6` | A floor within 7.6 (now `7.6.10`), installed as the machine-wide MSI | ADR-014 |
+> | `Start-Process pwsh -Verb RunAs` with joined arguments | One quoted argument string; the running pwsh elevated by absolute path | ADR-009 |
+> | `Assert-DistroPlacement` checks registry `DefaultUid -ne 0` | `--set-default-user`, then the effective user (`id -un`, `id -u` >= 1000); registry value informational | ADR-011 |
+> | `passwd` on first install only | Whenever `passwd -S` reports `L` or `NP` | ADR-012 |
+> | Handoff `git checkout "$ref"; git pull --ff-only \|\| true`; exit-2 heuristic for missing git | git probed first; origin checked with `git config`; ref resolved, then one detached checkout; unknown ref fails | ADR-013 |
+> | Defaults re-applied on every run; no `-LinuxUser` | `-Profiles`, `-DistroRoot`, `-LinuxUser` persisted in `state.json` | ADR-015 |
+
 Date: 2026-11-24
 Status: draft for approval
 Lives in: `setup-dev-win/docs/superpowers/specs/` once approved, with a copy in `setup-dev-linux-wsl`.

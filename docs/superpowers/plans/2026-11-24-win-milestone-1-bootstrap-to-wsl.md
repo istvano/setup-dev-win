@@ -1,5 +1,21 @@
 # setup-dev-win Milestone 1 (W0–W2): skeleton, bootstrap, features, WSL distro on D: — Implementation Plan
 
+> **Superseded by implementation (milestone 1, 2026-11-24).** The body below is kept as
+> written. Where it disagrees with the code, the code and `docs/DECISIONS.md` win:
+>
+> | Stale statement in this document | What was implemented | Decision |
+> |---|---|---|
+> | Edition read with `Get-WindowsEdition -Online` | `EditionID` registry value (DISM cmdlet needs elevation) | ADR-008 |
+> | Feature state from `Get-WindowsOptionalFeature`; `Enable-Features.ps1 -CheckOnly`; re-read after enabling | `Win32_OptionalFeature` through CIM, non-elevated; the elevated script only enables; its exit code is the result | ADR-010 |
+> | `script/lib/Features.psm1` | `script/lib/WindowsFeatures.psm1` (the name clashed with `script/stages/Features.psm1` under Pester) | ADR-010 |
+> | Stage-0 calls `Set-ExecutionPolicy` | Never called; launched with `-ExecutionPolicy Bypass` | ADR-003 |
+> | Exact PowerShell pin `7.6.6` | A floor within 7.6 (now `7.6.10`), installed as the machine-wide MSI | ADR-014 |
+> | `Start-Process pwsh -Verb RunAs` with joined arguments | One quoted argument string; the running pwsh elevated by absolute path | ADR-009 |
+> | `Assert-DistroPlacement` checks registry `DefaultUid -ne 0` | `--set-default-user`, then the effective user (`id -un`, `id -u` >= 1000); registry value informational | ADR-011 |
+> | `passwd` on first install only | Whenever `passwd -S` reports `L` or `NP` | ADR-012 |
+> | Handoff `git checkout "$ref"; git pull --ff-only \|\| true`; exit-2 heuristic for missing git | git probed first; origin checked with `git config`; ref resolved, then one detached checkout; unknown ref fails | ADR-013 |
+> | Defaults re-applied on every run; no `-LinuxUser` | `-Profiles`, `-DistroRoot`, `-LinuxUser` persisted in `state.json` | ADR-015 |
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** On a fresh Windows 11 machine (Home or Pro), the operator signs in, installs Git, clones this repo and runs `bootstrap.ps1`; after at most one reboot and re-run, a SHA256-verified Ubuntu distro named `dev` exists at `D:\WSL\dev` with a non-root default user and systemd, `.wslconfig` is in force (NAT, telemetry off), and `setup-dev-linux-wsl` has been cloned and run inside it.

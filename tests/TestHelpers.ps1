@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 function Initialize-WindowsStub {
     <#
     .SYNOPSIS
-        Defines global stubs for Windows-only cmdlets that this host lacks (W2).
+        Defines global stubs for Windows-only cmdlets that this host lacks.
     .DESCRIPTION
         Pester's Mock needs the command to exist. On Windows the real cmdlets are
         left alone and get mocked; on Linux pwsh a stub with the same parameter
