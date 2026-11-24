@@ -45,7 +45,8 @@ function Invoke-SetupRun {
     .PARAMETER Plan
         Describe, do not change, and do not record state.
     .PARAMETER LinuxRepoUrl
-        The Linux bootstrap repository the wsl stage hands off to.
+        The Linux bootstrap repository the wsl stage hands off to. Default:
+        https://github.com/<LinuxRepoOwner from pins.psd1>/setup-dev-linux-wsl.
     .PARAMETER LinuxRef
         Branch, tag or commit of that repository.
     .PARAMETER DistroRoot
@@ -57,7 +58,7 @@ function Invoke-SetupRun {
         [string]$Profiles = 'core',
         [ValidateSet('preflight', 'features', 'dotfiles', 'wsl', 'verify')][string]$Stage,
         [switch]$Plan,
-        [string]$LinuxRepoUrl = 'https://github.com/istvano/setup-dev-linux-wsl',
+        [string]$LinuxRepoUrl,
         [string]$LinuxRef = 'main',
         [string]$DistroRoot = 'D:\WSL'
     )
@@ -74,6 +75,11 @@ function Invoke-SetupRun {
         return 1
     }
 
+    if ([string]::IsNullOrEmpty($LinuxRepoUrl)) {
+        # One definition of the default: the owner lives in pins.psd1, the repo name is fixed.
+        $pins = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'pins.psd1')
+        $LinuxRepoUrl = "https://github.com/$($pins.LinuxRepoOwner)/setup-dev-linux-wsl"
+    }
     $context = @{
         Profiles = $profileList
         DistroRoot = $DistroRoot

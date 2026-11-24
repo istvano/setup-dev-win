@@ -12,7 +12,8 @@
 .PARAMETER Plan
     Show what would change; change and record nothing.
 .PARAMETER LinuxRepoUrl
-    The Linux bootstrap repository the wsl stage hands off to.
+    The Linux bootstrap repository the wsl stage hands off to (default derived
+    from pins.psd1 LinuxRepoOwner).
 .PARAMETER LinuxRef
     Branch, tag or commit of that repository.
 .PARAMETER DistroRoot
@@ -23,7 +24,7 @@ param(
     [string]$Profiles = 'core',
     [ValidateSet('preflight', 'features', 'dotfiles', 'wsl', 'verify')][string]$Stage,
     [switch]$Plan,
-    [string]$LinuxRepoUrl = 'https://github.com/istvano/setup-dev-linux-wsl',
+    [string]$LinuxRepoUrl,
     [string]$LinuxRef = 'main',
     [string]$DistroRoot = 'D:\WSL'
 )

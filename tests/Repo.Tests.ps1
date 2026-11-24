@@ -57,6 +57,10 @@ Describe 'Repository invariants' {
     # Windows PowerShell 5.1 reads a BOM-less file as the ANSI code page, so any
     # non-ASCII byte in a file it reads can corrupt it (W3). Skipped per file
     # while the file does not exist yet.
+    It 'pins.psd1 carries the Linux repository owner' {
+        (Import-PowerShellDataFile (Join-Path $script:Root 'script/lib/pins.psd1')).LinuxRepoOwner | Should-Be 'istvano'
+    }
+
     It 'ASCII-only file <_> (read by Windows PowerShell 5.1)' -ForEach @('bootstrap.ps1', 'script/lib/pins.psd1', 'wsl/ubuntu.lock.psd1') {
         $path = Join-Path $script:Root $_
         if (-not (Test-Path -LiteralPath $path)) {

@@ -4,4 +4,5 @@
     Chezmoi = '2.74.2'
     MinOsBuild = 26100
     MinWslVersion = '2.4.4'
+    LinuxRepoOwner = 'istvano'
 }
