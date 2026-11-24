@@ -67,3 +67,63 @@ Describe 'Repository invariants' {
         @($bytes | Where-Object { $_ -gt 127 }).Count | Should-Be 0
     }
 }
+
+Describe 'Workflows' {
+    BeforeAll {
+        $script:WorkflowFiles = @(
+            Get-ChildItem -Path (Join-Path $script:Root '.github/workflows') -File -ErrorAction SilentlyContinue |
+                Where-Object Extension -In '.yml', '.yaml'
+        )
+        # Non-comment lines of every workflow, as @{ File; Text } records.
+        $script:WorkflowLines = @(
+            foreach ($file in $script:WorkflowFiles) {
+                foreach ($line in (Get-Content -LiteralPath $file.FullName)) {
+                    if ($line -notmatch '^\s*#') { [pscustomobject]@{ File = $file.Name; Text = $line } }
+                }
+            }
+        )
+        $script:UsesLines = @($script:WorkflowLines | Where-Object { $_.Text -match '^\s*-?\s*uses:' })
+    }
+
+    It 'has at least one workflow with uses: lines (no vacuous pass)' {
+        $script:WorkflowFiles.Count | Should-BeGreaterThan 0
+        $script:UsesLines.Count | Should-BeGreaterThan 0
+    }
+
+    It 'pins every uses: line to a 40-hex SHA' {
+        $offenders = $script:UsesLines | Where-Object { $_.Text -notmatch '^\s*-?\s*uses:\s*\S+@[0-9a-f]{40}(\s|$)' }
+        @($offenders | ForEach-Object { "$($_.File): $($_.Text.Trim())" }) | Should-BeCollection @()
+    }
+
+    It 'has no floating refs' {
+        # Only uses: refs; `go install tool@v1.2.3` is an exact pin, not a floating ref.
+        $offenders = $script:UsesLines | Where-Object { $_.Text -match '@(latest|main|master)\b|@v\d' }
+        @($offenders | ForEach-Object { "$($_.File): $($_.Text.Trim())" }) | Should-BeCollection @()
+    }
+
+    It 'gives every Install-PSResource an exact -Version' {
+        $lines = @($script:WorkflowLines | Where-Object { $_.Text -match 'Install-PSResource' })
+        $offenders = $lines | Where-Object { $_.Text -notmatch '-Version\b' }
+        @($offenders | ForEach-Object { "$($_.File): $($_.Text.Trim())" }) | Should-BeCollection @()
+    }
+
+    It 'has no curl or wget piped to a shell' {
+        $offenders = $script:WorkflowLines | Where-Object { $_.Text -match '(curl|wget)\b.*\|\s*(sudo\s+)?(ba|z)?sh\b' }
+        @($offenders | ForEach-Object { "$($_.File): $($_.Text.Trim())" }) | Should-BeCollection @()
+    }
+
+    It 'sets persist-credentials: false on every checkout' {
+        $offenders = foreach ($file in $script:WorkflowFiles) {
+            $lines = @($script:WorkflowLines | Where-Object File -EQ $file.Name | ForEach-Object Text)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match 'uses:\s*actions/checkout@') {
+                    # The step's `with:` block runs until the next step ("- ").
+                    $j = $i + 1
+                    $block = while ($j -lt $lines.Count -and $lines[$j] -notmatch '^\s*-\s') { $lines[$j]; $j++ }
+                    if (-not ($block -match '^\s*persist-credentials:\s*false\s*$')) { "$($file.Name): checkout without persist-credentials: false" }
+                }
+            }
+        }
+        @($offenders) | Should-BeCollection @()
+    }
+}

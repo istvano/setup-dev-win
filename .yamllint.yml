@@ -1,0 +1,11 @@
+---
+extends: default
+rules:
+  # Workflow run blocks carry long URLs and commands.
+  line-length: disable
+  # GitHub's `on:` key is read by yamllint as a truthy value.
+  truthy:
+    check-keys: false
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
