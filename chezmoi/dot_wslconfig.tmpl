@@ -1,4 +1,7 @@
-{{- /* Owned by chezmoi (setup-dev-win). Edit the template, not the applied file. */ -}}
+{{- /* Owned by chezmoi (setup-dev-win). Edit the template, not the applied file.
+     Section placement follows https://learn.microsoft.com/en-us/windows/wsl/wsl-config
+     (WSL silently ignores a key in the wrong section): telemetry is a [wsl2]
+     key, distributionInstallPath is a [general] key. */ -}}
 {{- if lt (int .hostMemoryGB) 4 -}}
 {{-   fail "hostMemoryGB is below 4: memory detection failed. Refusing to write a .wslconfig." -}}
 {{- end -}}
@@ -20,12 +23,12 @@ networkingMode=nat
 localhostForwarding=true
 # Apply Windows Firewall rules to WSL traffic.
 firewall=true
-# Distro VHDs live on the data volume, not the system drive.
-distributionInstallPath={{ .wslDistroRoot | replace "\\" "\\\\" }}
-
-[general]
 # Do not send WSL diagnostics to Microsoft.
 telemetry=false
+
+[general]
+# Distro VHDs live on the data volume, not the system drive.
+distributionInstallPath={{ .wslDistroRoot | replace "\\" "\\\\" }}
 
 [experimental]
 # Sparse VHDs return freed space to the host.

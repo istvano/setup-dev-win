@@ -41,12 +41,12 @@ networkingMode=nat
 localhostForwarding=true
 # Apply Windows Firewall rules to WSL traffic.
 firewall=true
-# Distro VHDs live on the data volume, not the system drive.
-distributionInstallPath=D:\\WSL
-
-[general]
 # Do not send WSL diagnostics to Microsoft.
 telemetry=false
+
+[general]
+# Distro VHDs live on the data volume, not the system drive.
+distributionInstallPath=D:\\WSL
 
 [experimental]
 # Sparse VHDs return freed space to the host.
@@ -57,6 +57,21 @@ autoMemoryReclaim=gradual
         $result = Invoke-Render -Fixture 'ms02.toml'
         $result.ExitCode | Should-Be 0
         $result.Text.TrimEnd() | Should-Be $expected.TrimEnd()
+    }
+
+    It 'places every key in the section Microsoft documents' {
+        # https://learn.microsoft.com/en-us/windows/wsl/wsl-config: WSL ignores a misplaced key.
+        $result = Invoke-Render -Fixture 'ms02.toml'
+        $sections = @{}
+        $current = $null
+        foreach ($line in ($result.Text -split "`n")) {
+            if ($line -match '^\[(\w+)\]\s*$') { $current = $Matches[1]; $sections[$current] = [System.Collections.Generic.List[string]]::new() }
+            elseif ($line -match '^(\w+)=') { $sections[$current].Add($Matches[1]) }
+        }
+        @($sections.Keys | Sort-Object) | Should-BeCollection @('experimental', 'general', 'wsl2')
+        @($sections['wsl2'] | Sort-Object) | Should-BeCollection @('firewall', 'localhostForwarding', 'memory', 'networkingMode', 'processors', 'swap', 'telemetry')
+        @($sections['general']) | Should-BeCollection @('distributionInstallPath')
+        @($sections['experimental'] | Sort-Object) | Should-BeCollection @('autoMemoryReclaim', 'sparseVhd')
     }
 
     It 'never lets processors fall below 2' {
@@ -110,7 +125,17 @@ Describe 'Invoke-ChezmoiApply' {
     BeforeEach {
         Mock -ModuleName WslConfig Write-Info {}
         Mock -ModuleName WslConfig Get-ChezmoiPath { 'chezmoi' }
-        Mock -ModuleName WslConfig Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @('applied') } }
+        Mock -ModuleName WslConfig Invoke-Native {
+            [pscustomobject]@{ ExitCode = 0; Output = $(if ($ArgumentList[0] -eq 'cat') { @('rendered', 'content') } else { @('applied') }) }
+        }
+        $script:TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("wslcfg-" + [guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $script:TmpDir
+        $script:Cfg = Join-Path $script:TmpDir '.wslconfig'
+        $cfg = $script:Cfg
+        Mock -ModuleName WslConfig Get-WslConfigPath { $cfg }.GetNewClosure()
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $script:TmpDir -Recurse -Force
     }
     It 'reports Changed when the file hash differs' {
         $script:hashes = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'ABC'))
@@ -121,14 +146,36 @@ Describe 'Invoke-ChezmoiApply' {
         Mock -ModuleName WslConfig Get-WslConfigHash { 'SAME' }
         (Invoke-ChezmoiApply).Changed | Should-BeFalse
     }
-    It 'applies the repo chezmoi source and passes the distro root to the prompt' {
+    It 'applies the repo chezmoi source non-interactively and passes the distro root to the prompt' {
         Mock -ModuleName WslConfig Get-WslConfigHash { 'SAME' }
         $null = Invoke-ChezmoiApply -DistroRoot 'E:\WSL'
         Should-Invoke -ModuleName WslConfig -CommandName Invoke-Native -Times 1 -Exactly -ParameterFilter {
             $ArgumentList[0] -eq 'init' -and $ArgumentList -contains '--apply' -and
+            $ArgumentList -contains '--force' -and $ArgumentList -contains '--no-tty' -and
             $ArgumentList[([array]::IndexOf($ArgumentList, '--source') + 1)] -like '*chezmoi' -and
             $ArgumentList -contains 'WSL distro root=E:\WSL'
         }
+    }
+    It 'backs up an existing .wslconfig that differs from what chezmoi would write' {
+        Mock -ModuleName WslConfig Get-WslConfigHash { 'SAME' }
+        Set-Content -LiteralPath $script:Cfg -Value 'kernelCommandLine=custom'
+        $null = Invoke-ChezmoiApply
+        $backups = @(Get-ChildItem -LiteralPath $script:TmpDir -Force -Filter '.wslconfig.backup.*')
+        $backups.Count | Should-Be 1
+        $backups[0].Name | Should-MatchString '^\.wslconfig\.backup\.\d{8}T\d{6}Z$'
+        (Get-Content -LiteralPath $backups[0].FullName -Raw).Trim() | Should-Be 'kernelCommandLine=custom'
+        Should-Invoke -ModuleName WslConfig -CommandName Write-Info -ParameterFilter { $Message -like '*backup*' }
+    }
+    It 'does not back up an identical .wslconfig' {
+        Mock -ModuleName WslConfig Get-WslConfigHash { 'SAME' }
+        Set-Content -LiteralPath $script:Cfg -Value @('rendered', 'content')
+        $null = Invoke-ChezmoiApply
+        @(Get-ChildItem -LiteralPath $script:TmpDir -Force -Filter '.wslconfig.backup.*').Count | Should-Be 0
+    }
+    It 'does not back up when there is no .wslconfig' {
+        Mock -ModuleName WslConfig Get-WslConfigHash { '' }
+        $null = Invoke-ChezmoiApply
+        @(Get-ChildItem -LiteralPath $script:TmpDir -Force -Filter '.wslconfig.backup.*').Count | Should-Be 0
     }
 }
 
@@ -145,6 +192,14 @@ Describe 'Request-WslRestart' {
         Request-WslRestart -Changed $true
         Should-NotInvoke -ModuleName WslConfig -CommandName Invoke-Native -ParameterFilter { $ArgumentList -contains '--shutdown' }
         Should-Invoke -ModuleName WslConfig -CommandName Write-Warn -Times 1 -Exactly -ParameterFilter { $Message -eq 'Run wsl --shutdown to apply .wslconfig' }
+    }
+    It 'treats a failing or missing wsl as nothing running' {
+        Mock -ModuleName WslConfig Invoke-Native { throw 'wsl.exe exited with code 4294967295' }
+        Mock -ModuleName WslConfig Test-InteractiveSession { $true }
+        $threw = $false
+        try { Request-WslRestart -Changed $true } catch { $threw = $true }
+        $threw | Should-BeFalse
+        Should-NotInvoke -ModuleName WslConfig -CommandName Write-Warn
     }
     It 'does nothing when the file did not change' {
         Request-WslRestart -Changed $false

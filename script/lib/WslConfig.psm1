@@ -59,12 +59,20 @@ function Install-PinnedChezmoi {
     $null = Invoke-Native -FilePath 'winget.exe' -ArgumentList $arguments
 }
 
+function Get-WslConfigPath {
+    # Internal, mockable. The applied .wslconfig in the user profile.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    return (Join-Path $HOME '.wslconfig')
+}
+
 function Get-WslConfigHash {
     # Internal. SHA256 of the applied .wslconfig; empty string when absent.
     [CmdletBinding()]
     [OutputType([string])]
     param()
-    $path = Join-Path $HOME '.wslconfig'
+    $path = Get-WslConfigPath
     if (-not (Test-Path -LiteralPath $path)) { return '' }
     return [string](Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
 }
@@ -85,13 +93,29 @@ function Invoke-ChezmoiApply {
     $chezmoi = Get-ChezmoiPath
     if (-not $chezmoi) { throw 'chezmoi was not found; run Install-PinnedChezmoi first.' }
     $source = Join-Path (Get-RepoRoot) 'chezmoi'
-    $arguments = @('init', '--source', $source, '--apply')
+    # --force and --no-tty: never prompt, in any session (chezmoi would otherwise ask
+    # about a target changed since it was last written, or fail without a TTY).
+    $common = @('--source', $source, '--force', '--no-tty')
     if ($DistroRoot) {
         # promptStringOnce overrides are keyed by the prompt text, not the data key.
-        $arguments += @('--promptString', "WSL distro root=$DistroRoot")
+        $common += @('--promptString', "WSL distro root=$DistroRoot")
+    }
+    $target = Get-WslConfigPath
+    if (Test-Path -LiteralPath $target) {
+        # Write the config (data) without applying, so chezmoi can render the target.
+        $null = Invoke-Native -FilePath $chezmoi -ArgumentList (@('init') + $common)
+        $rendered = Invoke-Native -FilePath $chezmoi -ArgumentList @('cat', '--source', $source, $target)
+        $wanted = (($rendered.Output -join "`n") -replace "`r`n", "`n").Trim()
+        $existing = ((Get-Content -LiteralPath $target -Raw) -replace "`r`n", "`n").Trim()
+        if ($existing -ne $wanted) {
+            $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd\THHmmss\Z')
+            $backup = "$target.backup.$stamp"
+            Copy-Item -LiteralPath $target -Destination $backup
+            Write-Info "Existing .wslconfig differs; backed up to $backup"
+        }
     }
     $before = Get-WslConfigHash
-    $result = Invoke-Native -FilePath $chezmoi -ArgumentList $arguments
+    $result = Invoke-Native -FilePath $chezmoi -ArgumentList (@('init', '--apply') + $common)
     foreach ($line in $result.Output) { Write-Info $line }
     $after = Get-WslConfigHash
     return @{ Changed = [bool]($before -ne $after) }
@@ -120,7 +144,13 @@ function Request-WslRestart {
     param([Parameter(Mandatory)][bool]$Changed)
 
     if (-not $Changed) { return }
-    $running = Invoke-Native -FilePath 'wsl.exe' -ArgumentList @('--list', '--running', '--quiet') -AllowExitCode @(1)
+    try {
+        $running = Invoke-Native -FilePath 'wsl.exe' -ArgumentList @('--list', '--running', '--quiet')
+    }
+    catch {
+        # A missing wsl.exe or any non-zero exit means nothing is running; the file is already written.
+        return
+    }
     $names = @($running.Output | ForEach-Object { ($_ -replace "`0", '').Trim() } | Where-Object { $_ })
     if ($names.Count -eq 0) { return }
 
