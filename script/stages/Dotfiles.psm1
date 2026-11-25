@@ -11,7 +11,7 @@ function Invoke-DotfilesStage {
     .SYNOPSIS
         The Dotfiles stage: chezmoi owns .wslconfig.
     .DESCRIPTION
-        Installs the pinned chezmoi, applies the repository's chezmoi source and
+        Installs chezmoi when absent (latest stable), applies the repository's chezmoi source and
         offers to restart WSL when .wslconfig changed. Runs non-elevated.
     .PARAMETER Context
         Run context: Profiles, DistroRoot, LinuxRepoUrl, LinuxRef, Plan, Edition.
@@ -30,13 +30,12 @@ function Invoke-DotfilesStage {
         Write-Warn 'The dotfiles stage must run non-elevated: .wslconfig belongs to your user profile.'
         return 'failed'
     }
-    $pins = Import-PowerShellDataFile -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/pins.psd1')
     if ($Plan) {
-        Write-Info "Would install chezmoi $($pins.Chezmoi) and apply .wslconfig from the chezmoi source."
+        Write-Info 'Would install the latest stable chezmoi when absent and apply .wslconfig from the chezmoi source.'
         return 'done'
     }
     try {
-        Install-PinnedChezmoi -Version $pins.Chezmoi
+        Install-Chezmoi
         $distroRoot = if ($Context.ContainsKey('DistroRoot')) { [string]$Context.DistroRoot } else { '' }
         $apply = Invoke-ChezmoiApply -DistroRoot $distroRoot
         if ($apply.Changed) { Write-Ok '.wslconfig updated.' } else { Write-Ok '.wslconfig is up to date.' }

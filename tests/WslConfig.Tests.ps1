@@ -94,36 +94,35 @@ autoMemoryReclaim=gradual
     }
 }
 
-Describe 'Install-PinnedChezmoi' {
+Describe 'Install-Chezmoi' {
     BeforeEach {
         Mock -ModuleName WslConfig Write-Info {}
         Mock -ModuleName WslConfig Write-Ok {}
-        Mock -ModuleName WslConfig Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @() } }
+        Mock -ModuleName WslConfig Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @('noise') } }
     }
-    It 'skips winget when the pinned version is installed' {
-        Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { '2.74.2' }
-        Install-PinnedChezmoi -Version '2.74.2'
+    It 'skips winget when any chezmoi is present' {
+        Mock -ModuleName WslConfig Get-ChezmoiPath { 'C:\Users\a\AppData\Local\Microsoft\WinGet\Links\chezmoi.exe' }
+        Install-Chezmoi
         Should-NotInvoke -ModuleName WslConfig -CommandName Invoke-Native
     }
-    It 'installs the exact version at user scope when another version is present' {
-        Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { '2.60.0' }
-        Install-PinnedChezmoi -Version '2.74.2'
+    It 'installs the latest stable twpayne.chezmoi at user scope, with no --version, when absent' {
+        Mock -ModuleName WslConfig Get-ChezmoiPath { $null }
+        Install-Chezmoi
         Should-Invoke -ModuleName WslConfig -CommandName Invoke-Native -Times 1 -Exactly -ParameterFilter {
             $FilePath -eq 'winget.exe' -and
-            $ArgumentList -contains 'twpayne.chezmoi' -and $ArgumentList -contains '--exact' -and
-            $ArgumentList[([array]::IndexOf($ArgumentList, '--version') + 1)] -eq '2.74.2' -and
-            $ArgumentList[([array]::IndexOf($ArgumentList, '--scope') + 1)] -eq 'user'
+            ($ArgumentList -join ' ') -eq ('install --id twpayne.chezmoi --source winget --exact --scope user --silent ' +
+                '--accept-package-agreements --accept-source-agreements --disable-interactivity')
         }
     }
     It 'says before the winget install that it can take a while' {
-        Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { $null }
-        Install-PinnedChezmoi -Version '2.74.2'
+        Mock -ModuleName WslConfig Get-ChezmoiPath { $null }
+        Install-Chezmoi
         Should-Invoke -ModuleName WslConfig -CommandName Write-Info -Times 1 -Exactly -ParameterFilter {
-            $Message -eq 'Installing chezmoi 2.74.2 with winget (this can take a minute)...' }
+            $Message -eq 'Installing the latest stable chezmoi with winget (this can take a minute)...' }
     }
     It 'returns nothing on the pipeline' {
-        Mock -ModuleName WslConfig Get-InstalledChezmoiVersion { $null }
-        @(Install-PinnedChezmoi -Version '2.74.2').Count | Should-Be 0
+        Mock -ModuleName WslConfig Get-ChezmoiPath { $null }
+        @(Install-Chezmoi).Count | Should-Be 0
     }
 }
 
@@ -239,24 +238,24 @@ Describe 'Invoke-DotfilesStage' {
         Mock -ModuleName Dotfiles Write-Ok {}
         Mock -ModuleName Dotfiles Write-Warn {}
         Mock -ModuleName Dotfiles Test-IsElevated { $false }
-        Mock -ModuleName Dotfiles Install-PinnedChezmoi {}
+        Mock -ModuleName Dotfiles Install-Chezmoi {}
         Mock -ModuleName Dotfiles Invoke-ChezmoiApply { @{ Changed = $true } }
         Mock -ModuleName Dotfiles Request-WslRestart {}
     }
     It 'installs, applies, requests a restart and returns done' {
         Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'
-        Should-Invoke -ModuleName Dotfiles -CommandName Install-PinnedChezmoi -Times 1 -Exactly -ParameterFilter { $Version -eq '2.74.2' }
+        Should-Invoke -ModuleName Dotfiles -CommandName Install-Chezmoi -Times 1 -Exactly
         Should-Invoke -ModuleName Dotfiles -CommandName Invoke-ChezmoiApply -Times 1 -Exactly -ParameterFilter { $DistroRoot -eq 'D:\WSL' }
         Should-Invoke -ModuleName Dotfiles -CommandName Request-WslRestart -Times 1 -Exactly -ParameterFilter { $Changed -eq $true }
     }
     It 'refuses when elevated' {
         Mock -ModuleName Dotfiles Test-IsElevated { $true }
         Invoke-DotfilesStage -Context $script:ctx | Should-Be 'failed'
-        Should-NotInvoke -ModuleName Dotfiles -CommandName Install-PinnedChezmoi
+        Should-NotInvoke -ModuleName Dotfiles -CommandName Install-Chezmoi
     }
     It 'changes nothing under -Plan' {
         Invoke-DotfilesStage -Context $script:ctx -Plan | Should-Be 'done'
-        Should-NotInvoke -ModuleName Dotfiles -CommandName Install-PinnedChezmoi
+        Should-NotInvoke -ModuleName Dotfiles -CommandName Install-Chezmoi
         Should-NotInvoke -ModuleName Dotfiles -CommandName Invoke-ChezmoiApply
     }
     It 'returns failed when chezmoi apply throws' {

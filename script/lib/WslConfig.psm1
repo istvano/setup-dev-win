@@ -20,41 +20,30 @@ function Get-ChezmoiPath {
     return $null
 }
 
-function Get-InstalledChezmoiVersion {
-    # Internal. The installed chezmoi version string, or $null.
-    [CmdletBinding()]
-    [OutputType([string])]
-    param()
-    $path = Get-ChezmoiPath
-    if (-not $path) { return $null }
-    try { $result = Invoke-Native -FilePath $path -ArgumentList @('--version') }
-    catch { return $null }
-    $text = $result.Output -join ' '
-    if ($text -match 'v?(\d+\.\d+\.\d+)') { return $Matches[1] }
-    return $null
-}
-
-function Install-PinnedChezmoi {
+function Install-Chezmoi {
     <#
     .SYNOPSIS
-        Installs the exact chezmoi version through winget unless it is present.
-    .PARAMETER Version
-        The pinned version (pins.psd1 Chezmoi).
+        Installs the latest stable chezmoi through winget unless any chezmoi is present.
+    .DESCRIPTION
+        No version is pinned (W22, ADR-016): an installed chezmoi of any version is
+        kept, and an absent one is installed as winget's newest twpayne.chezmoi at
+        user scope. CI pins its own chezmoi in tests/tool-versions.psd1.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([void])]
-    param([Parameter(Mandatory)][string]$Version)
+    param()
 
-    if ((Get-InstalledChezmoiVersion) -eq $Version) {
-        Write-Ok "chezmoi $Version is already installed."
+    $existing = Get-ChezmoiPath
+    if ($existing) {
+        Write-Ok "chezmoi is already installed ($existing)."
         return
     }
-    if (-not $PSCmdlet.ShouldProcess("chezmoi $Version", 'winget install')) { return }
+    if (-not $PSCmdlet.ShouldProcess('chezmoi (latest stable)', 'winget install')) { return }
     # winget's output is captured, so say up front that the wait is expected.
-    Write-Info "Installing chezmoi $Version with winget (this can take a minute)..."
+    Write-Info 'Installing the latest stable chezmoi with winget (this can take a minute)...'
     $arguments = @(
         'install', '--id', 'twpayne.chezmoi', '--source', 'winget', '--exact',
-        '--version', $Version, '--scope', 'user', '--silent',
+        '--scope', 'user', '--silent',
         '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'
     )
     $null = Invoke-Native -FilePath 'winget.exe' -ArgumentList $arguments
@@ -92,7 +81,7 @@ function Invoke-ChezmoiApply {
     param([string]$DistroRoot)
 
     $chezmoi = Get-ChezmoiPath
-    if (-not $chezmoi) { throw 'chezmoi was not found; run Install-PinnedChezmoi first.' }
+    if (-not $chezmoi) { throw 'chezmoi was not found; run Install-Chezmoi first.' }
     $source = Join-Path (Get-RepoRoot) 'chezmoi'
     # --force and --no-tty: never prompt, in any session (chezmoi would otherwise ask
     # about a target changed since it was last written, or fail without a TTY).
@@ -193,4 +182,4 @@ function Invoke-ChezmoiVerify {
     return @{ Ok = ($result.ExitCode -eq 0); Output = $result.Output }
 }
 
-Export-ModuleMember -Function Install-PinnedChezmoi, Invoke-ChezmoiApply, Request-WslRestart, Invoke-ChezmoiVerify
+Export-ModuleMember -Function Install-Chezmoi, Invoke-ChezmoiApply, Request-WslRestart, Invoke-ChezmoiVerify

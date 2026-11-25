@@ -61,6 +61,12 @@ Describe 'Repository invariants' {
         (Import-PowerShellDataFile (Join-Path $script:Root 'script/lib/pins.psd1')).LinuxRepoOwner | Should-Be 'istvano'
     }
 
+    It 'pins.psd1 has a PowerShell floor and no installed-version pins (W21, W22)' {
+        $pins = Import-PowerShellDataFile (Join-Path $script:Root 'script/lib/pins.psd1')
+        $pins.MinPowerShell | Should-Be '7.6'
+        @($pins.Keys | Where-Object { $_ -in 'PowerShell', 'Chezmoi' }) | Should-BeCollection @()
+    }
+
     It 'ASCII-only file <_> (read by Windows PowerShell 5.1)' -ForEach @('bootstrap.ps1', 'script/lib/pins.psd1', 'wsl/ubuntu.lock.psd1') {
         $path = Join-Path $script:Root $_
         if (-not (Test-Path -LiteralPath $path)) {
