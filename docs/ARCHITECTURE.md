@@ -42,7 +42,7 @@ the default (ADR-015).
 Exit 3010 means reboot required; the operator re-runs `pwsh -File script\setup.ps1`.
 Elevated work lives only under `script/elevated/` and is allowlisted by name; its
 `[warn]`/`[fail]` lines also go to `%LOCALAPPDATA%\setup-dev-win\elevated.log`, which the
-features stage prints after a failure (ADR-010).
+features stage prints after a failure (ADR-010). With the MSIX PowerShell these files may be virtualised under `%LOCALAPPDATA%\Packages\Microsoft.PowerShell_8wekyb3d8bbwe\LocalCache\Local\setup-dev-win\`. To find where they landed: `Get-ChildItem $env:LOCALAPPDATA -Recurse -Filter state.json -ErrorAction SilentlyContinue | Select-Object FullName`.
 
 UAC prompts on a first run, by source: the Git installer (README step 2, before this
 repository runs); `Enable-Features.ps1` (the only elevation this repository performs,

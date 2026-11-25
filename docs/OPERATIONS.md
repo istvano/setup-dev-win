@@ -4,6 +4,9 @@ Runbook for milestone 1: from a fresh Windows 11 x64 machine to a working WSL2 d
 `dev`. State lives in `%LOCALAPPDATA%\setup-dev-win\state.json`. Exit codes of
 `script\setup.ps1`: 0 done, 3010 reboot required, 1 failure.
 
+With the MSIX PowerShell these files may be virtualised under `%LOCALAPPDATA%\Packages\Microsoft.PowerShell_8wekyb3d8bbwe\LocalCache\Local\setup-dev-win\`. To find where they landed: `Get-ChildItem $env:LOCALAPPDATA -Recurse -Filter state.json -ErrorAction SilentlyContinue | Select-Object FullName`. The same applies to
+`elevated.log` (`-Filter elevated.log`).
+
 ## New machine
 
 1. Sign in once; winget registers only after the first interactive login.
@@ -215,6 +218,9 @@ Stage-0 and elevation:
 - [ ] Elevation under the MSIX pwsh: `[Environment]::ProcessPath` is under
       `C:\Program Files\WindowsApps\` (record it), and the features stage's elevated
       pwsh starts from the alias path and runs `Enable-Features.ps1`.
+- [ ] Re-run with the distro `dev` already registered: no manifest fetch and no download
+      (the wsl stage prints no `Distro image:` line), and `<root>\cache` holds only the
+      current `.wsl` after a fresh install.
 - [ ] `-DistroRoot C:\WSL` given to `bootstrap.ps1` reaches `setup.ps1` and is kept in
       `state.json`; on a machine without `D:` and no flag, preflight names the
       `-DistroRoot` re-run.
@@ -223,6 +229,8 @@ Stage-0 and elevation:
       long-lived child).
 - [ ] An elevated launch of `bootstrap.ps1` and of `script\setup.ps1` is refused with
       `Run from a normal (non-elevated) terminal; elevation is requested per step.`
+- [ ] Record where `state.json` and `elevated.log` actually land under the MSIX pwsh
+      (`%LOCALAPPDATA%\setup-dev-win\` or the `Packages\Microsoft.PowerShell_8wekyb3d8bbwe\LocalCache\Local\setup-dev-win\` copy), with the find command above.
 - [ ] `%LOCALAPPDATA%\setup-dev-win\elevated.log` gets a timestamped `[fail]` line on a
       forced failure: in an elevated terminal run
       `pwsh -File script\elevated\Enable-Features.ps1 -Name Bogus` (expect exit 2 and

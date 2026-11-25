@@ -248,7 +248,12 @@ install time, not a pinned version:
   with that name, so the newest point release is installed. The download is verified
   against that SHA256 exactly as before. An unreachable manifest, a missing or
   duplicated entry, a non-https URL or a hash that is not 64 hex characters stops the
-  stage before anything is downloaded.
+  stage before anything is downloaded. The URL must also be on `releases.ubuntu.com` or
+  `cdimage.ubuntu.com` (host compared exactly, case-insensitively) and its path must end
+  with `.wsl`, so a changed manifest cannot point the download elsewhere. The wsl stage
+  reads the manifest and downloads only when `dev` is not registered, and after a
+  verified download removes other `*.wsl` and stale `*.partial` files from
+  `<DistroRoot>\cache`.
 - winget health: stage-0 runs `winget source update` before installing. A
   `0x80070005` / "Failed to open the predefined source" failure (seen on the real
   machine) stops it with the fix: `winget source reset --force` in an administrator

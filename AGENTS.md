@@ -19,14 +19,18 @@ These are deliberate defaults, not placeholders:
   build number, never a version name. Home must not break; Pro adds features.
 - Never write a capability claim that is true of only one machine or edition.
   Detect it (edition, virtualization, nested virtualization) rather than remember it.
-- Language: scripts under `script/` target PowerShell 7.6 LTS. `pins.psd1` holds a
-  floor within 7.6 (any 7.6.x at or above it is accepted; installed as the MSI,
-  ADR-014). `bootstrap.ps1` alone runs on Windows PowerShell 5.1.
+- Language: scripts under `script/` need PowerShell 7.6 or later. `pins.psd1`
+  `MinPowerShell` (7.6) is a floor with no upper bound; stage-0 installs the latest
+  stable PowerShell, which is MSIX (ADR-016). `bootstrap.ps1` alone runs on Windows
+  PowerShell 5.1.
 - Package manager: winget ONLY. Scoop and Chocolatey are rejected (ADR-002).
 - Configuration engine: chezmoi (`.chezmoiroot` points at `chezmoi/`).
-- Distro: name `dev`, installed at `<root>\dev` (default root `D:\WSL`), image
-  `Ubuntu-26.04` amd64 `.wsl`, pinned by URL and SHA256 from Microsoft's
-  `DistributionInfo.json`. If the Linux repo falls back to 24.04, this repo uses
+- Distro: name `dev`, installed at `<root>\dev` (default root `D:\WSL`; `C:\WSL` is
+  an example for a machine without `D:`), image the newest `Ubuntu-26.04` amd64 `.wsl`.
+  Its URL and SHA256 are resolved at install time from Microsoft's
+  `DistributionInfo.json` over https; `wsl/ubuntu.lock.psd1` holds only `Name` and
+  `Source`, and the URL host must be `releases.ubuntu.com` or `cdimage.ubuntu.com`
+  (ADR-016). If the Linux repo falls back to 24.04, this repo uses
   `Ubuntu-24.04` with it; releases are never mixed. Repos live on ext4 inside the
   distro, never on `/mnt/c` or `/mnt/d` (ADR-007).
 - WSL networking is NAT, never mirrored (ADR-006).
@@ -53,7 +57,10 @@ package exists.
 - `bootstrap.ps1`: stage-0, Windows PowerShell 5.1-compatible, ASCII only.
 - `script/`: PowerShell 7 commands. `script/lib/` is the shared module and
   `script/elevated/` holds the only scripts that may run elevated (ADR-004).
-- `script/lib/pins.psd1`: pinned versions and digests read by stage-0. ASCII only.
+- `script/lib/pins.psd1`: version floors and fixed settings read by stage-0
+  (`MinPowerShell`, `MinOsBuild`, `MinWslVersion`, `LinuxRepoOwner`); no
+  installed-version pins. ASCII only.
+- `wsl/ubuntu.lock.psd1`: the distro `Name` and manifest `Source`. ASCII only.
 - `profiles/*.winget.yaml`: WinGet Configuration files, one per profile.
 - `chezmoi/`: Windows-side user configuration.
 - `tests/`: Pester 6 tests; `tests/tool-versions.psd1` pins the gate's own tools.
@@ -125,7 +132,8 @@ Do not weaken these without explicit operator approval and a documented decision
   `mirrored`.
 - cloud-init user-data contains no passwords or secrets and is deleted after first
   boot.
-- The distro image is verified against its pinned SHA256 before use.
+- The distro image is verified against the SHA256 in Microsoft's manifest before use;
+  an unreachable or invalid manifest fails closed (ADR-016).
 - No tool reports usage to its vendor where a verified opt-out exists.
 - Interactive shells, firewalls and password managers remain mutually exclusive.
 - Fail closed on ambiguous security state.
