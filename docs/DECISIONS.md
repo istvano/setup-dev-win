@@ -33,7 +33,8 @@ Status: accepted. Spec section 6.3.
 
 Windows has no download-and-run script. The only network-to-execution paths are
 winget (hash-pinned, Microsoft-validated), `git clone` of the operator's own
-repositories and the SHA256-verified Ubuntu image. Stage-0 never downloads winget and
+repositories and the SHA256-verified Ubuntu image (the hash comes from Microsoft's
+manifest, ADR-016). Stage-0 never downloads winget and
 never installs a module from PSGallery. `Invoke-Expression`, `iex` and
 `DownloadString` are banned and enforced by `tests/Repo.Tests.ps1`.
 
@@ -95,7 +96,8 @@ cmdlets stay inside `script/elevated/`.
 
 ## ADR-009: Elevated launch quotes every argument and elevates the running pwsh
 
-Status: accepted. Spec section 6.2; amends the plan's `Start-Process pwsh -Verb RunAs`.
+Status: accepted; amended by ADR-016 (the MSIX package is elevated through its app
+execution alias). Spec section 6.2; amends the plan's `Start-Process pwsh -Verb RunAs`.
 
 `Invoke-ElevatedScript` builds ONE argument string, quoting each token by the
 `CommandLineToArgvW` rules (embedded quotes escaped, backslashes before a quote or at
@@ -175,7 +177,7 @@ program against a local bare repository.
 
 ## ADR-014: PowerShell is a floor within the 7.6 LTS line, installed as the MSI
 
-Status: accepted. Supersedes the exact `7.6.6` pin in the plan and spec.
+Status: superseded by ADR-016. Superseded the exact `7.6.6` pin in the plan and spec.
 
 An exact pin failed every re-run after Windows Update or winget moved pwsh to a later
 7.6 patch. `pins.psd1` `PowerShell` is now a floor: stage-0 accepts an installed
@@ -202,6 +204,12 @@ reference (`install.md`, ms.date 2025-07-15) documents `--scope` and
 
 Status: accepted. Spec section 6.4.
 
+`bootstrap.ps1` also takes `-DistroRoot` and `-LinuxUser` and passes each to
+`script\setup.ps1` only when given, as its own quoted argument, so a machine without
+`D:` can start with `-DistroRoot C:\WSL` and a later run still uses the kept value.
+When the distro drive does not exist, preflight says to re-run with
+`-DistroRoot <drive>:\WSL`.
+
 `-Profiles`, `-DistroRoot` and `-LinuxUser` are kept under `settings` in
 `%LOCALAPPDATA%\setup-dev-win\state.json`, written atomically like stage results. A flag
 given explicitly wins and is persisted; without the flag the persisted value is used;
@@ -213,3 +221,60 @@ absent and never writes. Without this, a re-run after a reboot silently fell bac
 the defaults (dropping `lab`, or looking for `dev` under the wrong root), and an invalid
 Windows user name was a dead end because the message named a `-LinuxUser` that did not
 exist.
+
+## ADR-016: Install the latest stable components
+
+Status: accepted. Operator decision, 2026-11-25 (rulings W21, W22). Supersedes ADR-014,
+the frozen image URL and SHA256 in the spec and plan, and the pinned chezmoi version;
+amends ADR-009.
+
+Every component the setup installs on the machine is the latest stable release at
+install time, not a pinned version:
+
+- PowerShell: stage-0 runs `winget install --id Microsoft.PowerShell --source winget
+  --exact --silent --accept-package-agreements --accept-source-agreements
+  --disable-interactivity`, with no `--version`, `--installer-type` or `--scope`.
+  `pins.psd1` `MinPowerShell = '7.6'` is a floor with no upper bound: an installed
+  stable pwsh at or above it is kept and handed off to, an older one triggers the
+  install. The handoff target is resolved after refreshing PATH: `pwsh.exe` on PATH,
+  then `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, then
+  `%ProgramFiles%\PowerShell\7\pwsh.exe`; stage-0 throws naming what each reported.
+- chezmoi: `twpayne.chezmoi` through winget at user scope with no `--version`, skipped
+  when any chezmoi is present. CI's own chezmoi stays pinned in
+  `tests/tool-versions.psd1`: it is the test harness, not installed on the machine.
+- Ubuntu image: `wsl/ubuntu.lock.psd1` keeps only `Name` (`Ubuntu-26.04`) and `Source`
+  (Microsoft's `DistributionInfo.json`). `Resolve-DistroImage` fetches `Source` over
+  https and takes the `Amd64Url` `Url` and `Sha256` of the `ModernDistributions` entry
+  with that name, so the newest point release is installed. The download is verified
+  against that SHA256 exactly as before. An unreachable manifest, a missing or
+  duplicated entry, a non-https URL or a hash that is not 64 hex characters stops the
+  stage before anything is downloaded.
+- winget health: stage-0 runs `winget source update` before installing. A
+  `0x80070005` / "Failed to open the predefined source" failure (seen on the real
+  machine) stops it with the fix: `winget source reset --force` in an administrator
+  terminal, `winget source update` in a normal one, then an App Installer update from
+  the Microsoft Store if it persists.
+
+Consequences of the MSIX package. winget's current `Microsoft.PowerShell` (7.7) ships
+only as MSIX: a per-user install that normally raises no UAC prompt, started through
+its app execution alias in `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on the user
+PATH. The running pwsh's `[Environment]::ProcessPath` is then under
+`C:\Program Files\WindowsApps\`, whose files are not meant to be started by path, so
+`Invoke-ElevatedScript` elevates the alias instead and throws when it is missing
+(amends ADR-009; verify on the real machine). Writes under AppData from a packaged
+process can be virtualised and hidden from `wsl.exe`, so the image is cached in
+`<DistroRoot>\cache` rather than `%TEMP%`, which also keeps it off `C:`.
+
+Trade-offs, accepted by the operator:
+
+- Trust in the image hash moves from a value reviewed in this repository to
+  Microsoft's manifest, fetched over HTTPS from `raw.githubusercontent.com`
+  (`microsoft/WSL`, branch `master`). Whoever can change that file can choose the image
+  and its hash together; the SHA256 check now proves only that the download matches
+  the manifest.
+- Runs are not reproducible over time: machines provisioned weeks apart can get
+  different PowerShell, chezmoi and Ubuntu point releases. Verify checks behaviour,
+  not versions.
+- A later PowerShell can change behaviour the modules rely on; `#Requires -Version 7.6`
+  is a floor, not a ceiling.
+- winget's own review (ADR-002) still covers the PowerShell and chezmoi installers.

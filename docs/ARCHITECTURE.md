@@ -18,9 +18,11 @@ beyond first boot.
 ## Stage flow
 
 Stage-0 (`bootstrap.ps1`, Windows PowerShell 5.1) refuses an elevated launch, checks
-the OS and winget, installs PowerShell 7.6 as the machine-wide MSI unless an installed
-7.6.x at or above the `pins.psd1` floor is present (ADR-014), and hands off to
-`script/setup.ps1` under `pwsh`, waiting for that process only (not its descendants).
+the OS and winget, runs `winget source update` (stopping with the reset steps on
+`0x80070005`), installs the latest stable PowerShell 7 through winget unless a pwsh at or
+above `pins.psd1` `MinPowerShell` (7.6) is present (ADR-016), and hands off to
+`script/setup.ps1` under that pwsh, waiting for that process only (not its descendants).
+`-Profiles`, `-DistroRoot` and `-LinuxUser` are passed through only when given.
 It never calls `Set-ExecutionPolicy` (the operator launches it with a process-scope
 Bypass). `setup` is a thin entry point; `script/lib/Runner.psm1` runs the stages in
 order, keeping results in `%LOCALAPPDATA%\setup-dev-win\state.json`, and seeds
@@ -33,8 +35,8 @@ the default (ADR-015).
 |---|---|---|
 | preflight | edition, build, data volume, Documents not redirected, virtualization, Kernel DMA state | none |
 | features | enable `VirtualMachinePlatform` (Hyper-V only with `lab` on Pro, refused on Home); state read via CIM | one UAC prompt from this repo (`script/elevated/`); `wsl --install`/`--update` raise their own |
-| dotfiles | pinned chezmoi, apply `.wslconfig`, offer `wsl --shutdown` | refuses to run elevated |
-| wsl | verified image, install `dev`, default user, password, handoff to the Linux repo | none |
+| dotfiles | latest chezmoi when none is present, apply `.wslconfig`, offer `wsl --shutdown` | refuses to run elevated |
+| wsl | image resolved from Microsoft's manifest, cached in `<root>\cache`, SHA256-verified; install `dev`, default user, password, handoff to the Linux repo | none |
 | verify | read-only checks, always run (see OPERATIONS) | none |
 
 Exit 3010 means reboot required; the operator re-runs `pwsh -File script\setup.ps1`.
@@ -43,10 +45,13 @@ Elevated work lives only under `script/elevated/` and is allowlisted by name; it
 features stage prints after a failure (ADR-010).
 
 UAC prompts on a first run, by source: the Git installer (README step 2, before this
-repository runs); the PowerShell MSI (stage-0); `Enable-Features.ps1` (the only
-elevation this repository performs, through `script/elevated/`); `wsl --install
---no-distribution`, which elevates itself; possibly `wsl --update`. The repository
-itself elevates only through `script/elevated/` (ADR-004). See OPERATIONS.
+repository runs); `Enable-Features.ps1` (the only elevation this repository performs,
+through `script/elevated/`); `wsl --install --no-distribution`, which elevates itself;
+possibly `wsl --update`. The PowerShell install is the per-user MSIX package and
+normally raises none. The repository itself elevates only through `script/elevated/`
+(ADR-004). Under the MSIX pwsh the elevated process is started from its app execution
+alias `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, otherwise from
+`[Environment]::ProcessPath` (ADR-009, ADR-016). See OPERATIONS.
 
 The handoff runs a fixed bash program inside `dev` that refuses a clone with a foreign
 origin, resolves the ref before checking it out and never falls back to stale code

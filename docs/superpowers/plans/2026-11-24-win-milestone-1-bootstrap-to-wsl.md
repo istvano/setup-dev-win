@@ -9,12 +9,15 @@
 > | Feature state from `Get-WindowsOptionalFeature`; `Enable-Features.ps1 -CheckOnly`; re-read after enabling | `Win32_OptionalFeature` through CIM, non-elevated; the elevated script only enables; its exit code is the result | ADR-010 |
 > | `script/lib/Features.psm1` | `script/lib/WindowsFeatures.psm1` (the name clashed with `script/stages/Features.psm1` under Pester) | ADR-010 |
 > | Stage-0 calls `Set-ExecutionPolicy` | Never called; launched with `-ExecutionPolicy Bypass` | ADR-003 |
-> | Exact PowerShell pin `7.6.6` | A floor within 7.6 (now `7.6.10`), installed as the machine-wide MSI | ADR-014 |
-> | `Start-Process pwsh -Verb RunAs` with joined arguments | One quoted argument string; the running pwsh elevated by absolute path | ADR-009 |
+> | Exact PowerShell pin `7.6.6` | Latest stable PowerShell from winget (MSIX), any installed pwsh 7.6 or later accepted (`pins.psd1` `MinPowerShell`); ADR-014's 7.6 MSI floor is superseded | ADR-016 |
+> | `Start-Process pwsh -Verb RunAs` with joined arguments | One quoted argument string; the running pwsh elevated by absolute path, or the MSIX package by its app execution alias | ADR-009, ADR-016 |
 > | `Assert-DistroPlacement` checks registry `DefaultUid -ne 0` | `--set-default-user`, then the effective user (`id -un`, `id -u` >= 1000); registry value informational | ADR-011 |
 > | `passwd` on first install only | Whenever `passwd -S` reports `L` or `NP` | ADR-012 |
 > | Handoff `git checkout "$ref"; git pull --ff-only \|\| true`; exit-2 heuristic for missing git | git probed first; origin checked with `git config`; ref resolved, then one detached checkout; unknown ref fails | ADR-013 |
-> | Defaults re-applied on every run; no `-LinuxUser` | `-Profiles`, `-DistroRoot`, `-LinuxUser` persisted in `state.json` | ADR-015 |
+> | Defaults re-applied on every run; no `-LinuxUser` | `-Profiles`, `-DistroRoot`, `-LinuxUser` persisted in `state.json`; `bootstrap.ps1` passes `-DistroRoot` and `-LinuxUser` through when given | ADR-015 |
+> | Image `Ubuntu-26.04` pinned by URL and SHA256 in the lock | The lock keeps `Name` and `Source`; URL and SHA256 are read from `DistributionInfo.json` at install time and the download is verified against them | ADR-016 |
+> | Image downloaded to the temp directory | Cached in `<DistroRoot>\cache` | ADR-016 |
+> | Pinned chezmoi version (`pins.psd1` `Chezmoi`) | Latest stable chezmoi from winget, any installed chezmoi kept | ADR-016 |
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

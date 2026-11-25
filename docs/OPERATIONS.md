@@ -12,13 +12,21 @@ Runbook for milestone 1: from a fresh Windows 11 x64 machine to a working WSL2 d
 3. `git clone` this repository to a path of your choice.
 4. `powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1` from a normal (not
    elevated) terminal (Windows PowerShell 5.1, process-scope bypass only;
-   `Set-ExecutionPolicy` is never called). An elevated launch is refused.
+   `Set-ExecutionPolicy` is never called). An elevated launch is refused. On a machine
+   without a `D:` drive, pick the distro root on this first run:
 
-Stage-0 checks the OS, installs PowerShell 7.6 through winget when no accepted 7.6 is
-present (ADR-014) and hands off to `script\setup.ps1`, which runs `preflight`,
-`features`, `dotfiles`, `wsl` and `verify`. Options: `-Profiles core,lab`,
-`-DistroRoot D:\WSL`, `-LinuxUser <name>`, `-LinuxRef <ref>`, `-Plan` (show what would
-change, change nothing), `-Stage <name>` (run one stage).
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DistroRoot C:\WSL
+   ```
+
+Stage-0 checks the OS, runs `winget source update`, installs the latest stable
+PowerShell 7 through winget when no pwsh 7.6 or later is present (ADR-016) and hands off
+to `script\setup.ps1`, which runs `preflight`, `features`, `dotfiles`, `wsl` and
+`verify`. `bootstrap.ps1` takes `-Profiles`, `-DistroRoot` and `-LinuxUser` and passes
+each on only when given. `setup.ps1` options: `-Profiles core,lab`, `-DistroRoot D:\WSL`,
+`-LinuxUser <name>`, `-LinuxRef <ref>`, `-Plan` (show what would change, change
+nothing), `-Stage <name>` (run one stage). If preflight reports that the distro drive
+was not found, re-run with `-DistroRoot <drive>:\WSL`.
 
 `-Profiles`, `-DistroRoot` and `-LinuxUser` are remembered in `state.json` (ADR-015): a
 flag you pass wins and is kept; a later run without it uses the kept value; the first
@@ -35,7 +43,7 @@ prompts on a first run, each from the source named:
 | Prompt | Source |
 |---|---|
 | Git installer | README step 2 (`winget install Git.Git`), before this repository runs |
-| PowerShell MSI | stage-0, when PowerShell 7.6 must be installed (machine-wide MSI, ADR-014) |
+| PowerShell 7 | stage-0 installs the latest stable package, which is MSIX: a per-user install that normally raises no prompt (ADR-016) |
 | Enable Windows features | this repository: `script/elevated/Enable-Features.ps1`, one prompt for all missing features |
 | `wsl --install --no-distribution` | wsl.exe elevates itself when WSL is missing or too old |
 | `wsl --update` | possibly, when wsl.exe elevates itself to update |
@@ -50,12 +58,16 @@ Things to expect:
   `[fail]` lines are also appended to `%LOCALAPPDATA%\setup-dev-win\elevated.log`, and
   the stage prints the new ones after a failure. If a restart is needed the run exits
   3010; see "After a reboot".
-- `dotfiles` installs the pinned chezmoi and applies `.wslconfig` (sections `[wsl2]`,
-  `[general]`, `[experimental]`). An existing, different `.wslconfig` is backed up to
-  `.wslconfig.backup.<timestamp>` first. Run non-elevated.
-- `wsl` downloads the pinned Ubuntu image, verifies its SHA256, installs it as `dev`
-  under `<DistroRoot>\dev`, then hands off to `setup-dev-linux-wsl` inside it. The
-  handoff is interactive: the Linux bootstrap asks for your git identity.
+- `dotfiles` installs the latest stable chezmoi when none is present and applies
+  `.wslconfig` (sections `[wsl2]`, `[general]`, `[experimental]`). An existing,
+  different `.wslconfig` is backed up to `.wslconfig.backup.<timestamp>` first. Run
+  non-elevated.
+- `wsl` reads the newest `Ubuntu-26.04` image URL and SHA256 from Microsoft's
+  `DistributionInfo.json` (it stops if that cannot be read), downloads the image to
+  `<DistroRoot>\cache`, verifies its SHA256, installs it as `dev` under
+  `<DistroRoot>\dev`, then hands off to `setup-dev-linux-wsl` inside it. The handoff
+  is interactive: the Linux bootstrap asks for your git identity. The cached image is
+  reused on a rebuild; delete `<DistroRoot>\cache` to free the space.
 - `verify` always runs last and prints `OK <check>` or `FAIL <check>: <reason>`.
 
 ## After a reboot
@@ -129,6 +141,19 @@ Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller
 
 Then re-run `bootstrap.ps1`. Nothing downloads winget for you.
 
+## winget source errors (0x80070005)
+
+Stage-0 runs `winget source update` before installing. If it or an install fails with
+`0x80070005` (Access is denied) or `Failed to open the predefined source`, stage-0 stops
+and prints these steps:
+
+1. In an administrator terminal: `winget source reset --force`
+2. In a normal terminal: `winget source update`
+3. If it still fails, update App Installer from the Microsoft Store (Library > Get
+   updates).
+
+Then re-run `bootstrap.ps1`.
+
 ## Password / sudo
 
 cloud-init creates the Linux user with a locked password, and `sudo` needs one. On every
@@ -180,12 +205,19 @@ comment in the code where one exists.
 
 Stage-0 and elevation:
 
-- [ ] PowerShell: which installer winget chose (expect `wix`, the MSI) and where pwsh
-      landed (expect `C:\Program Files\PowerShell\7\pwsh.exe`).
-- [ ] Version floor: with a later 7.6 patch installed than `pins.psd1`, stage-0 skips
-      the install and hands off to it.
-- [ ] Elevation by `[Environment]::ProcessPath` works: the features stage's elevated
-      pwsh starts from that path and runs `Enable-Features.ps1`.
+- [ ] winget source health: `winget source update` succeeds before the install on a
+      fresh machine; if `0x80070005` appears, the printed reset steps fix it.
+- [ ] PowerShell: winget installs the MSIX package (7.7 or later) without a UAC prompt,
+      and after the PATH refresh `pwsh.exe` resolves to the app execution alias
+      `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, which stage-0 hands off to.
+- [ ] Version floor: an installed pwsh 7.6 or later (an existing MSI, for example) is
+      kept with no install.
+- [ ] Elevation under the MSIX pwsh: `[Environment]::ProcessPath` is under
+      `C:\Program Files\WindowsApps\` (record it), and the features stage's elevated
+      pwsh starts from the alias path and runs `Enable-Features.ps1`.
+- [ ] `-DistroRoot C:\WSL` given to `bootstrap.ps1` reaches `setup.ps1` and is kept in
+      `state.json`; on a machine without `D:` and no flag, preflight names the
+      `-DistroRoot` re-run.
 - [ ] Each UAC prompt and its source, against the table in "UAC prompts".
 - [ ] Stage-0 returns promptly once `setup.ps1` exits (no hang on wslhost or another
       long-lived child).
@@ -209,6 +241,8 @@ Windows features and WSL:
 
 The dev distro:
 
+- [ ] The image URL resolved from `DistributionInfo.json` is printed, the file lands in
+      `<DistroRoot>\cache` (not `%TEMP%`), and `wsl --install --from-file` reads it.
 - [ ] Lxss registry value names: `DistributionName`, `BasePath`, `Version`, `DefaultUid`.
 - [ ] Registry `DefaultUid` before and after `wsl --manage dev --set-default-user`, and
       whether that option exists in the installed WSL.
