@@ -216,6 +216,55 @@ Describe 'Resolve-DistroImage' {
         Mock -ModuleName Distro Invoke-RestMethod { $m }.GetNewClosure()
         { Resolve-DistroImage -Lock $script:ManifestLock } | Should-Throw -ExceptionMessage $Msg
     }
+
+    It 'accepts the host <HostName> in any case' -ForEach @(
+        @{ HostName = 'cdimage.ubuntu.com'; Url = 'https://cdimage.ubuntu.com/x/y.wsl' }
+        @{ HostName = 'RELEASES.Ubuntu.COM'; Url = 'https://RELEASES.Ubuntu.COM/x/y.WSL' }
+    ) {
+        $m = Get-ManifestWith { param($m, $e) $e.Amd64Url.Url = $Url }.GetNewClosure()
+        Mock -ModuleName Distro Invoke-RestMethod { $m }.GetNewClosure()
+        (Resolve-DistroImage -Lock $script:ManifestLock).Url | Should-Be $Url
+    }
+
+    It 'refuses the URL <Url> with <Msg>' -ForEach @(
+        @{ Url = 'https://evil.example/x/y.wsl'; Msg = '*host*evil.example*not allowed*' }
+        @{ Url = 'https://releases.ubuntu.com.evil.example/y.wsl'; Msg = '*host*not allowed*' }
+        @{ Url = 'https://evil.example@releases.ubuntu.com.evil.example/y.wsl'; Msg = '*host*not allowed*' }
+        @{ Url = 'https://sub.releases.ubuntu.com/y.wsl'; Msg = '*host*not allowed*' }
+        @{ Url = 'https://releases.ubuntu.com/x/y.tar.gz'; Msg = '*must end with .wsl*' }
+        @{ Url = 'https://releases.ubuntu.com/x/y.wsl/'; Msg = '*must end with .wsl*' }
+        @{ Url = 'https://releases.ubuntu.com/x/y.wsl.exe'; Msg = '*must end with .wsl*' }
+    ) {
+        $m = Get-ManifestWith { param($m, $e) $e.Amd64Url.Url = $Url }.GetNewClosure()
+        Mock -ModuleName Distro Invoke-RestMethod { $m }.GetNewClosure()
+        { Resolve-DistroImage -Lock $script:ManifestLock } | Should-Throw -ExceptionMessage $Msg
+    }
+}
+
+Describe 'Clear-ImageCache' {
+    BeforeEach {
+        Mock -ModuleName Distro Write-Info { }
+        $script:Dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:Dir | Out-Null
+        foreach ($n in 'new.wsl', 'old.wsl', 'old.wsl.partial', 'x.partial', 'keep.txt') {
+            Set-Content -LiteralPath (Join-Path $script:Dir $n) -Value 'x'
+        }
+        New-Item -ItemType Directory -Path (Join-Path $script:Dir 'sub') | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:Dir 'sub\nested.wsl') -Value 'x'
+        Set-Content -LiteralPath (Join-Path $script:Dir 'sub\nested.partial') -Value 'x'
+    }
+
+    It 'keeps the current image and unrelated files, removes other images and partials, never recurses' {
+        Clear-ImageCache -Directory $script:Dir -Keep (Join-Path $script:Dir 'new.wsl')
+        $left = @(Get-ChildItem -LiteralPath $script:Dir -File | ForEach-Object Name | Sort-Object)
+        ($left -join ',') | Should-Be 'keep.txt,new.wsl'
+        Test-Path -LiteralPath (Join-Path $script:Dir 'sub\nested.wsl') | Should-BeTrue
+        Test-Path -LiteralPath (Join-Path $script:Dir 'sub\nested.partial') | Should-BeTrue
+    }
+
+    It 'does nothing when the directory does not exist' {
+        Clear-ImageCache -Directory (Join-Path $script:Dir 'nope') -Keep 'C:\x\a.wsl'
+    }
 }
 
 Describe 'Get-LinuxUserName' {

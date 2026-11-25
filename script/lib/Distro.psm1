@@ -109,12 +109,55 @@ function Resolve-DistroImage {
     if (-not $url.StartsWith('https://', [System.StringComparison]::Ordinal)) {
         throw "Distribution '$name' in the distro manifest has Amd64Url.Url '$url'; it must start with https://."
     }
+    # The hash comes from the same manifest as the URL, so the URL is the other half
+    # of the trust: only Ubuntu's own hosts, and only a .wsl file, are accepted.
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($url, [System.UriKind]::Absolute, [ref]$uri)) {
+        throw "Distribution '$name' in the distro manifest has Amd64Url.Url '$url', which is not a valid URL."
+    }
+    $allowedHosts = @('releases.ubuntu.com', 'cdimage.ubuntu.com')
+    if ($uri.Host.ToLowerInvariant() -notin $allowedHosts) {
+        throw ("Distribution '$name' in the distro manifest has Amd64Url.Url '$url'; its host '$($uri.Host)' " +
+            "is not allowed (expected $($allowedHosts -join ' or ')).")
+    }
+    if (-not $uri.AbsolutePath.EndsWith('.wsl', [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Distribution '$name' in the distro manifest has Amd64Url.Url '$url'; the file name must end with .wsl."
+    }
     $sha = ([string](Get-JsonMember -Object $amd64 -Name 'Sha256')).Trim().ToLowerInvariant()
     if ($sha.StartsWith('0x', [System.StringComparison]::Ordinal)) { $sha = $sha.Substring(2) }
     if ($sha -cnotmatch '^[0-9a-f]{64}$') {
         throw "Distribution '$name' in the distro manifest has Amd64Url.Sha256 '$sha'; it must be 64 hex characters."
     }
     @{ Name = $name; Url = $url; Sha256 = $sha }
+}
+
+function Clear-ImageCache {
+    <#
+    .SYNOPSIS
+        Deletes the other *.wsl images and every *.partial file in Directory.
+    .DESCRIPTION
+        Only those two patterns, only in Directory itself (no recursion). Called
+        after a verified download so the cache holds the one current image.
+    .PARAMETER Keep
+        Full path of the image to keep.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Directory,
+        [Parameter(Mandatory)][string]$Keep
+    )
+    if (-not (Test-Path -LiteralPath $Directory)) { return }
+    $keepLeaf = [System.IO.Path]::GetFileName($Keep)
+    $stale = @(Get-ChildItem -LiteralPath $Directory -File | Where-Object {
+            ($_.Name -like '*.partial') -or (($_.Name -like '*.wsl') -and ($_.Name -ne $keepLeaf))
+        })
+    foreach ($file in $stale) {
+        try {
+            Remove-Item -LiteralPath $file.FullName -Force
+            Write-Info "Removed stale cache file $($file.Name)"
+        }
+        catch { Write-Warn "Could not remove $($file.FullName): $($_.Exception.Message)" }
+    }
 }
 
 function Save-VerifiedImage {
@@ -489,5 +532,5 @@ function Assert-DistroPlacement {
 }
 
 Export-ModuleMember -Function Get-DistroLock, Resolve-DistroImage, Save-VerifiedImage, Get-LinuxUserName, New-CloudInitUserData,
-Get-RegisteredDistro, Install-DevDistro, Set-DevUserPassword, Assert-DistroPlacement, Assert-DefaultUser,
+Clear-ImageCache, Get-RegisteredDistro, Install-DevDistro, Set-DevUserPassword, Assert-DistroPlacement, Assert-DefaultUser,
 Get-LastResultLine, Get-DistroRecoveryHint
