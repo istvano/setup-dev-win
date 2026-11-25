@@ -40,6 +40,9 @@ function Test-DataVolume {
     <#
     .SYNOPSIS
         Checks that a drive letter is an existing, fixed, NTFS volume.
+    .OUTPUTS
+        @{ Ok = [bool]; Reason = [string]; Missing = [bool] } where Missing means
+        the drive does not exist at all.
     .PARAMETER DriveLetter
         The drive letter to check.
     #>
@@ -52,14 +55,14 @@ function Test-DataVolume {
     catch {
         $volume = $null
     }
-    if (-not $volume) { return @{ Ok = $false; Reason = "Volume ${DriveLetter}: not found." } }
+    if (-not $volume) { return @{ Ok = $false; Reason = "Volume ${DriveLetter}: not found."; Missing = $true } }
     if ($volume.FileSystem -ne 'NTFS') {
-        return @{ Ok = $false; Reason = "Volume ${DriveLetter}: is $($volume.FileSystem); NTFS is required." }
+        return @{ Ok = $false; Reason = "Volume ${DriveLetter}: is $($volume.FileSystem); NTFS is required."; Missing = $false }
     }
     if ($volume.DriveType -ne 'Fixed') {
-        return @{ Ok = $false; Reason = "Volume ${DriveLetter}: is $($volume.DriveType); a fixed drive is required." }
+        return @{ Ok = $false; Reason = "Volume ${DriveLetter}: is $($volume.DriveType); a fixed drive is required."; Missing = $false }
     }
-    @{ Ok = $true; Reason = '' }
+    @{ Ok = $true; Reason = ''; Missing = $false }
 }
 
 function Test-DocumentsRedirected {

@@ -46,6 +46,21 @@ Describe 'Invoke-PreflightStage' {
         Should-Invoke -ModuleName Preflight -CommandName Write-Warn -ParameterFilter { $Message -like '*volume D is not NTFS*' }
     }
 
+    It 'suggests -DistroRoot when the drive does not exist' {
+        Initialize-Healthy
+        Mock -ModuleName Preflight Test-DataVolume { @{ Ok = $false; Reason = 'Volume D: not found.'; Missing = $true } }
+        Invoke-PreflightStage -Context (Get-TestContext) | Should-Be 'failed'
+        Should-Invoke -ModuleName Preflight -CommandName Write-Warn -Times 1 -Exactly -ParameterFilter {
+            $Message -like '*Volume D: not found.*re-run with -DistroRoot <drive>:\WSL*powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DistroRoot C:\WSL*' }
+    }
+
+    It 'does not suggest -DistroRoot when the drive exists but is unsuitable' {
+        Initialize-Healthy
+        Mock -ModuleName Preflight Test-DataVolume { @{ Ok = $false; Reason = 'Volume D: is FAT32; NTFS is required.'; Missing = $false } }
+        Invoke-PreflightStage -Context (Get-TestContext) | Should-Be 'failed'
+        Should-NotInvoke -ModuleName Preflight -CommandName Write-Warn -ParameterFilter { $Message -like '*-DistroRoot <drive>*' }
+    }
+
     It 'checks the drive letter of DistroRoot, uppercased' {
         Initialize-Healthy
         Invoke-PreflightStage -Context (Get-TestContext -DistroRoot 'e:\WSL') | Should-Be 'done'

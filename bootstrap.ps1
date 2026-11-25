@@ -12,11 +12,19 @@
     Comma-separated profile list passed through to script\setup.ps1.
 .PARAMETER SkipPowerShellInstall
     Do not install PowerShell 7 (it must already be on PATH).
+.PARAMETER DistroRoot
+    Root directory for WSL distributions, passed to script\setup.ps1 only when
+    given (setup persists it; default D:\WSL). A machine without a D: drive
+    uses, for example: -DistroRoot C:\WSL
+.PARAMETER LinuxUser
+    The Linux user for the dev distro, passed to script\setup.ps1 only when given.
 #>
 [CmdletBinding()]
 param(
     [string]$Profiles = '',
-    [switch]$SkipPowerShellInstall
+    [switch]$SkipPowerShellInstall,
+    [string]$DistroRoot = '',
+    [string]$LinuxUser = ''
 )
 
 Set-StrictMode -Version Latest
@@ -339,6 +347,25 @@ function Resolve-PowerShell7 {
         'winget install --id Microsoft.PowerShell --source winget --exact')
 }
 
+function ConvertTo-QuotedArgument {
+    <#
+    .SYNOPSIS
+        Quotes one value for a Windows command line (CommandLineToArgvW rules).
+    .DESCRIPTION
+        Wraps the value in double quotes, doubles backslashes that precede a quote
+        or the closing quote, and escapes embedded quotes, so a path with spaces or
+        a trailing backslash arrives as one intact argument. The same rules as
+        ConvertTo-CommandLineArgument in script\lib\Common.psm1, which stage-0
+        cannot import.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    $escaped = $Value -replace '(\\*)"', '$1$1\"'
+    $escaped = $escaped -replace '(\\+)$', '$1$1'
+    return '"' + $escaped + '"'
+}
+
 function Invoke-Handoff {
     <#
     .SYNOPSIS
@@ -356,11 +383,21 @@ function Invoke-Handoff {
     param(
         [Parameter(Mandatory)][string]$PwshPath,
         [Parameter(Mandatory)][string]$SetupPath,
-        [string]$Profiles
+        [string]$Profiles,
+        [string]$DistroRoot,
+        [string]$LinuxUser
     )
-    $argumentText = '-NoProfile -File "' + $SetupPath + '"'
+    # Each option is passed only when given, so values setup.ps1 persisted on an
+    # earlier run still apply.
+    $argumentText = '-NoProfile -File ' + (ConvertTo-QuotedArgument -Value $SetupPath)
     if ($Profiles) {
-        $argumentText += ' -Profiles "' + $Profiles + '"'
+        $argumentText += ' -Profiles ' + (ConvertTo-QuotedArgument -Value $Profiles)
+    }
+    if ($DistroRoot) {
+        $argumentText += ' -DistroRoot ' + (ConvertTo-QuotedArgument -Value $DistroRoot)
+    }
+    if ($LinuxUser) {
+        $argumentText += ' -LinuxUser ' + (ConvertTo-QuotedArgument -Value $LinuxUser)
     }
     $process = @(Start-Process -FilePath $PwshPath -ArgumentList $argumentText -NoNewWindow -PassThru)[-1]
     $null = $process.Handle
@@ -470,7 +507,7 @@ function Invoke-Bootstrap {
     #>
     [CmdletBinding()]
     [OutputType([int])]
-    param([string]$Profiles, [switch]$SkipPowerShellInstall)
+    param([string]$Profiles, [switch]$SkipPowerShellInstall, [string]$DistroRoot, [string]$LinuxUser)
 
     # Up front, before anything changes: an elevated stage-0 would hand an
     # elevated pwsh to setup.ps1, which refuses it anyway (ADR-004).
@@ -502,10 +539,10 @@ function Invoke-Bootstrap {
 
     Sync-SessionPath
     $pwsh = Resolve-PowerShell7 -Minimum $pins.MinPowerShell
-    return [int](Invoke-Handoff -PwshPath $pwsh -SetupPath $setup -Profiles $Profiles)
+    return [int](Invoke-Handoff -PwshPath $pwsh -SetupPath $setup -Profiles $Profiles -DistroRoot $DistroRoot -LinuxUser $LinuxUser)
 }
 
 if ($env:SETUP_DEV_WIN_NO_MAIN -ne '1') {
-    $code = Invoke-Bootstrap -Profiles $Profiles -SkipPowerShellInstall:$SkipPowerShellInstall
+    $code = Invoke-Bootstrap -Profiles $Profiles -SkipPowerShellInstall:$SkipPowerShellInstall -DistroRoot $DistroRoot -LinuxUser $LinuxUser
     exit $code
 }

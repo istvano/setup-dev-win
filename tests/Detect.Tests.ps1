@@ -33,6 +33,7 @@ Describe 'Test-DataVolume' {
         $r = Test-DataVolume -DriveLetter 'Q'
         $r.Ok | Should-BeFalse
         $r.Reason | Should-BeLikeString '*not found*'
+        $r.Missing | Should-BeTrue
     }
 
     It 'treats a Get-Volume error as not found' {
@@ -44,6 +45,7 @@ Describe 'Test-DataVolume' {
         Mock -ModuleName Detect Get-Volume { [pscustomobject]@{ FileSystem = 'FAT32'; DriveType = 'Fixed' } }
         $r = Test-DataVolume -DriveLetter 'D'
         $r.Ok | Should-BeFalse
+        $r.Missing | Should-BeFalse
         $r.Reason | Should-BeLikeString '*NTFS*'
     }
 

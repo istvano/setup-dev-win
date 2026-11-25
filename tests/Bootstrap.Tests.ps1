@@ -314,6 +314,19 @@ Describe 'Resolve-PowerShell7' {
     }
 }
 
+Describe 'ConvertTo-QuotedArgument' {
+    It 'quotes <Name>' -ForEach @(
+        @{ Name = 'a plain value'; Value = 'abc'; Expected = '"abc"' }
+        @{ Name = 'a space'; Value = 'D:\My WSL'; Expected = '"D:\My WSL"' }
+        @{ Name = 'an embedded quote'; Value = 'a"b'; Expected = '"a\"b"' }
+        @{ Name = 'backslashes before a quote'; Value = 'a\"b'; Expected = '"a\\\"b"' }
+        @{ Name = 'a trailing backslash'; Value = 'D:\My WSL\'; Expected = '"D:\My WSL\\"' }
+        @{ Name = 'an empty string'; Value = ''; Expected = '""' }
+    ) {
+        ConvertTo-QuotedArgument -Value $Value | Should-Be $Expected
+    }
+}
+
 Describe 'Invoke-Handoff' {
     BeforeEach {
         $script:Fake = New-Object -TypeName PSObject
@@ -332,6 +345,27 @@ Describe 'Invoke-Handoff' {
             $FilePath -eq 'C:\Program Files\PowerShell\7\pwsh.exe' -and
             $ArgumentList -ceq '-NoProfile -File "D:\My Repos\setup-dev-win\script\setup.ps1" -Profiles "core,lab"' -and
             $NoNewWindow -and $PassThru -and -not $Wait
+        }
+    }
+
+    It 'passes -DistroRoot and -LinuxUser as separate quoted arguments when given' {
+        $null = Invoke-Handoff -PwshPath 'pwsh.exe' -SetupPath 'C:\r\script\setup.ps1' -Profiles 'core' -DistroRoot 'E:\My WSL' -LinuxUser 'alice'
+        Should-Invoke -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $ArgumentList -ceq '-NoProfile -File "C:\r\script\setup.ps1" -Profiles "core" -DistroRoot "E:\My WSL" -LinuxUser "alice"'
+        }
+    }
+
+    It 'passes -DistroRoot alone, doubling a trailing backslash so the quote survives' {
+        $null = Invoke-Handoff -PwshPath 'pwsh.exe' -SetupPath 'C:\r\script\setup.ps1' -DistroRoot 'C:\WSL dir\'
+        Should-Invoke -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $ArgumentList -ceq '-NoProfile -File "C:\r\script\setup.ps1" -DistroRoot "C:\WSL dir\\"'
+        }
+    }
+
+    It 'passes -LinuxUser alone' {
+        $null = Invoke-Handoff -PwshPath 'pwsh.exe' -SetupPath 'C:\r\script\setup.ps1' -LinuxUser 'bob'
+        Should-Invoke -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $ArgumentList -ceq '-NoProfile -File "C:\r\script\setup.ps1" -LinuxUser "bob"'
         }
     }
 
@@ -413,6 +447,18 @@ Describe 'Invoke-Bootstrap' {
         Should-Invoke -CommandName Invoke-Handoff -Times 1 -Exactly -ParameterFilter { $PwshPath -eq 'pwsh-fake' }
     }
 
+    It 'passes -DistroRoot and -LinuxUser through to the handoff' {
+        $null = Invoke-Bootstrap -DistroRoot 'C:\WSL' -LinuxUser 'alice'
+        Should-Invoke -CommandName Invoke-Handoff -Times 1 -Exactly -ParameterFilter {
+            $DistroRoot -eq 'C:\WSL' -and $LinuxUser -eq 'alice' }
+    }
+
+    It 'passes empty -DistroRoot and -LinuxUser when they are not given' {
+        $null = Invoke-Bootstrap
+        Should-Invoke -CommandName Invoke-Handoff -Times 1 -Exactly -ParameterFilter {
+            [string]::IsNullOrEmpty($DistroRoot) -and [string]::IsNullOrEmpty($LinuxUser) }
+    }
+
     It 'skips the install when asked' {
         Invoke-Bootstrap -SkipPowerShellInstall | Out-Null
         Should-NotInvoke -CommandName Install-PowerShell
@@ -423,6 +469,13 @@ Describe 'bootstrap.ps1 static checks' {
     It 'does not change the execution policy' {
         $code = Get-Content -LiteralPath $script:Bootstrap | Where-Object { $_ -notmatch '^\s*#' }
         ($code -join "`n") | Should-NotMatchString 'Set-ExecutionPolicy'
+    }
+
+    It 'accepts -DistroRoot and -LinuxUser and the main block passes them on' {
+        $params = (Get-Command -Name $script:Bootstrap).Parameters.Keys
+        @($params) | Should-ContainCollection @('Profiles', 'SkipPowerShellInstall', 'DistroRoot', 'LinuxUser')
+        $text = Get-Content -LiteralPath $script:Bootstrap -Raw
+        $text | Should-MatchString 'Invoke-Bootstrap -Profiles \$Profiles -SkipPowerShellInstall:\$SkipPowerShellInstall -DistroRoot \$DistroRoot -LinuxUser \$LinuxUser'
     }
 
     It 'main does not run when SETUP_DEV_WIN_NO_MAIN is 1' {
