@@ -311,3 +311,31 @@ The repository invariant widens accordingly: `dism.exe` and the DISM cmdlets
 Superseded by implementation: the spec and plan text that names
 `Enable-WindowsOptionalFeature` (spec section 6.4 and plan task for `Enable-Features.ps1`)
 describes the cmdlet; the implementation uses `dism.exe` as above.
+
+## ADR-018: Install the WSL package through the elevated script
+
+Status: accepted. Operator ruling W24, from a real-machine failure (Windows 11 Home,
+PowerShell 7.7.0 MSIX, after ADR-017 enabled `VirtualMachinePlatform`).
+
+The design assumed `wsl --install --no-distribution` elevates itself. Run from the
+non-elevated runner it downloaded "Windows Subsystem for Linux 3.0.5", then failed at
+"Installing" with "Catastrophic failure / The requested operation requires elevation."
+and exit code 1. wsl.exe does not raise its own UAC prompt.
+
+`Enable-Features.ps1` therefore takes `-InstallWsl`: after enabling the allowlisted
+features it runs `%SystemRoot%\System32\wsl.exe --install --no-distribution`, then
+`--update` (absolute path, output shown in the elevated window and captured). Exit 0 is
+success, 3010 a restart, anything else a `[fail]` line with wsl's output in the elevated
+log and exit 1; a failed feature skips the WSL step. The features stage makes one
+elevated call for both, so a first run raises one UAC prompt from this repository. Its
+`-Name` may be empty only with `-InstallWsl`. The repository still elevates only
+through `script/elevated/` (ADR-004), and still installs the latest WSL (ADR-016).
+
+The same failure exposed a lost restart: features were enabled (exit 3010) but the
+stage failed afterwards, so `reboot-required` was never recorded. The features stage
+now also returns `reboot-required` when the Component Based Servicing `RebootPending`
+key exists (readable without elevation), so the WSL stage never runs on a platform
+whose features are still pending.
+
+Superseded by implementation: the spec and plan text that says wsl.exe raises its own
+UAC prompt.

@@ -1,23 +1,30 @@
 #Requires -Version 7.6
 <#
 .SYNOPSIS
-    The only script in this repository that runs elevated: enables Windows optional features.
+    The only script in this repository that runs elevated: enables Windows optional
+    features and installs the WSL package.
 .DESCRIPTION
     Launched by Invoke-ElevatedScript in a fresh pwsh; it does not rely on the
     caller's module state and imports nothing. -Name is checked against an exact
-    allowlist before anything else happens. Exit 0 = done, 3010 = restart needed,
-    1 = enabling failed, 2 = refused input. It enables only; it never reads state.
+    allowlist before anything else happens. Features are enabled first; with
+    -InstallWsl the WSL package is then installed and updated by wsl.exe, which
+    no longer elevates itself (ADR-018). Exit 0 = done, 3010 = restart needed,
+    1 = a step failed, 2 = refused input. It changes only; it never reads state.
     Its window closes when it exits, so every [warn] and [fail] line is also
     appended, timestamped, to %LOCALAPPDATA%\setup-dev-win\elevated.log, which
     the features stage prints after a failed run. The elevated process runs as
     the same (administrator) user, so LOCALAPPDATA is the caller's.
 .PARAMETER Name
     Feature names; a comma-separated token is split (-File passes one string per
-    parameter, so the caller sends 'A,B' as a single token).
+    parameter, so the caller sends 'A,B' as a single token). May be empty only
+    with -InstallWsl.
+.PARAMETER InstallWsl
+    Also run `wsl.exe --install --no-distribution` then `wsl.exe --update`.
 #>
 [CmdletBinding()]
 param(
-    [string[]]$Name = @()
+    [string[]]$Name = @(),
+    [switch]$InstallWsl
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -64,14 +71,53 @@ function Invoke-Dism {
     return @{ ExitCode = $LASTEXITCODE; Output = $output }
 }
 
+function Invoke-WslExe {
+    # The one place wsl.exe runs elevated (ADR-018). Output streams to this window
+    # (the download is long) and is also captured for the log. Absolute path, so a
+    # wsl.exe planted on PATH is never run elevated. Returns @{ ExitCode; Output };
+    # it never throws on a non-zero exit.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string[]]$ArgumentList)
+    if (-not $env:SystemRoot) { throw 'SystemRoot is not set; cannot locate wsl.exe.' }
+    $wslPath = Join-Path $env:SystemRoot 'System32\wsl.exe'
+    if (-not (Test-Path -LiteralPath $wslPath -PathType Leaf)) { throw "wsl.exe not found at $wslPath." }
+    $env:WSL_UTF8 = '1'
+    $PSNativeCommandUseErrorActionPreference = $false
+    $captured = $null
+    & $wslPath @ArgumentList 2>&1 | Tee-Object -Variable captured | Out-Host
+    return @{ ExitCode = $LASTEXITCODE; Output = (@($captured) | Out-String) }
+}
+
+function Invoke-WslRequest {
+    # Installs, then updates, the WSL package. Returns 0, 3010 or 1.
+    [CmdletBinding()]
+    [OutputType([int])]
+    param()
+    $restart = $false
+    foreach ($arguments in @(@('--install', '--no-distribution'), @('--update'))) {
+        $label = "wsl.exe $($arguments -join ' ')"
+        Write-ElevatedLine -Level info -Message "Running $label"
+        $result = Invoke-WslExe -ArgumentList $arguments
+        $exitCode = [int]$result.ExitCode
+        if ($exitCode -eq 3010) { $restart = $true; continue }
+        if ($exitCode -ne 0) {
+            Write-ElevatedLine -Level fail -Message "$label failed with exit code ${exitCode}: $(([string]$result.Output).Trim())"
+            return 1
+        }
+    }
+    if ($restart) { return 3010 }
+    return 0
+}
+
 function Invoke-FeatureRequest {
     [CmdletBinding()]
     [OutputType([int])]
     param(
-        [string[]]$Name = @()
+        [string[]]$Name = @(),
+        [switch]$InstallWsl
     )
     $names = @($Name | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    if ($names.Count -eq 0) {
+    if ($names.Count -eq 0 -and -not $InstallWsl) {
         Write-ElevatedLine -Level fail -Message 'No feature name given.'
         return 2
     }
@@ -97,6 +143,14 @@ function Invoke-FeatureRequest {
             return 1
         }
     }
+    if ($InstallWsl) {
+        $wsl = Invoke-WslRequest
+        if ($wsl -eq 1) {
+            if ($restart) { Write-ElevatedLine -Level warn -Message 'The features were enabled and need a restart even though the WSL install failed.' }
+            return 1
+        }
+        if ($wsl -eq 3010) { $restart = $true }
+    }
     if ($restart) { return 3010 }
     return 0
 }
@@ -105,9 +159,9 @@ function Invoke-ElevatedMain {
     # The script body: runs the request and turns a throw into exit code 1.
     [CmdletBinding()]
     [OutputType([int])]
-    param([string[]]$Name = @())
+    param([string[]]$Name = @(), [switch]$InstallWsl)
     try {
-        return [int](Invoke-FeatureRequest -Name $Name)
+        return [int](Invoke-FeatureRequest -Name $Name -InstallWsl:$InstallWsl)
     }
     catch {
         Write-ElevatedLine -Level fail -Message $_.Exception.Message
@@ -117,5 +171,5 @@ function Invoke-ElevatedMain {
 
 # SETUP_DEV_WIN_NO_MAIN=1 lets tests dot-source the functions without running.
 if ($env:SETUP_DEV_WIN_NO_MAIN -ne '1') {
-    exit (Invoke-ElevatedMain -Name $Name)
+    exit (Invoke-ElevatedMain -Name $Name -InstallWsl:$InstallWsl)
 }

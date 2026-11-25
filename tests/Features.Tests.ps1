@@ -97,6 +97,87 @@ Describe 'Enable-Features.ps1' {
             }
             Mock Write-Host {}
         }
+        function script:Initialize-Wsl {
+            param([hashtable]$Results = @{})
+            $script:WslResults = $Results
+            $script:WslCalls = [System.Collections.Generic.List[string]]::new()
+            Mock Invoke-WslExe {
+                $key = $ArgumentList -join ' '
+                $script:WslCalls.Add($key)
+                if ($script:WslResults.ContainsKey($key)) { $script:WslResults[$key] } else { @{ ExitCode = 0; Output = 'ok' } }
+            }
+        }
+    }
+
+    It 'refuses an empty request without -InstallWsl' {
+        Initialize-Dism
+        Initialize-Wsl
+        Invoke-FeatureRequest -Name @() | Should-Be 2
+        Should-NotInvoke Invoke-Dism
+        Should-NotInvoke Invoke-WslExe
+    }
+
+    It '-InstallWsl alone installs then updates WSL and runs no dism' {
+        Initialize-Dism
+        Initialize-Wsl
+        Invoke-FeatureRequest -InstallWsl | Should-Be 0
+        Should-NotInvoke Invoke-Dism
+        @($script:WslCalls) | Should-BeCollection @('--install --no-distribution', '--update')
+    }
+
+    It 'enables features before installing WSL' {
+        Initialize-Dism
+        Initialize-Wsl
+        $script:Order = [System.Collections.Generic.List[string]]::new()
+        Mock Invoke-Dism { $script:Order.Add('dism'); @{ ExitCode = 3010; Output = 'restart' } }
+        Mock Invoke-WslExe { $script:Order.Add('wsl'); @{ ExitCode = 0; Output = 'ok' } }
+        Invoke-FeatureRequest -Name @('VirtualMachinePlatform') -InstallWsl | Should-Be 3010
+        @($script:Order) | Should-BeCollection @('dism', 'wsl', 'wsl')
+    }
+
+    It 'does not install WSL when a feature fails' {
+        Initialize-Dism -Results @{ VirtualMachinePlatform = @{ ExitCode = 50; Output = 'nope' } }
+        Initialize-Wsl
+        Invoke-FeatureRequest -Name @('VirtualMachinePlatform') -InstallWsl | Should-Be 1
+        Should-NotInvoke Invoke-WslExe
+    }
+
+    It 'exits 3010 when wsl --update exits 3010' {
+        Initialize-Dism
+        Initialize-Wsl -Results @{ '--update' = @{ ExitCode = 3010; Output = 'restart' } }
+        Invoke-FeatureRequest -InstallWsl | Should-Be 3010
+    }
+
+    It 'exits 1, skips --update and logs wsl output when wsl --install fails' {
+        Initialize-Dism
+        Initialize-Wsl -Results @{ '--install --no-distribution' = @{ ExitCode = 1; Output = "Catastrophic failure`nThe requested operation requires elevation." } }
+        Invoke-ElevatedMain -Name @('VirtualMachinePlatform') -InstallWsl | Should-Be 1
+        @($script:WslCalls) | Should-BeCollection @('--install --no-distribution')
+        (Get-Content -LiteralPath $script:ElevatedLogPath -Raw) | Should-BeLikeString '* `[fail`] wsl.exe --install --no-distribution failed with exit code 1*Catastrophic failure*requires elevation*'
+    }
+
+    It 'a WSL failure after a feature 3010 exits 1 and names the owed restart' {
+        Initialize-Dism -Results @{ VirtualMachinePlatform = @{ ExitCode = 3010; Output = 'restart' } }
+        Initialize-Wsl -Results @{ '--install --no-distribution' = @{ ExitCode = 5; Output = 'denied' } }
+        Invoke-ElevatedMain -Name @('VirtualMachinePlatform') -InstallWsl | Should-Be 1
+        $lines = @(Get-Content -LiteralPath $script:ElevatedLogPath)
+        $lines[0] | Should-BeLikeString '* `[fail`] wsl.exe --install --no-distribution failed with exit code 5*denied*'
+        $lines[1] | Should-BeLikeString '* `[warn`] *need a restart even though the WSL install failed*'
+    }
+
+    It 'Invoke-WslExe runs wsl.exe by absolute System32 path' {
+        $text = Get-Content -LiteralPath $script:ElevatedScript -Raw
+        $text | Should-MatchString ([regex]::Escape("Join-Path `$env:SystemRoot 'System32\wsl.exe'"))
+        $text | Should-MatchString ([regex]::Escape("& `$wslPath @ArgumentList"))
+    }
+
+    It 'Invoke-WslExe fails clearly when wsl.exe is missing' {
+        $saved = $env:SystemRoot
+        try {
+            $env:SystemRoot = Join-Path $TestDrive 'no-windows'
+            { Invoke-WslExe -ArgumentList @('--update') } | Should-Throw -ExceptionMessage '*wsl.exe not found*'
+        }
+        finally { if ($null -ne $saved) { $env:SystemRoot = $saved } else { Remove-Item Env:\SystemRoot -ErrorAction SilentlyContinue } }
     }
 
     It 'refuses Containers-DisposableClientVM without calling dism' {
@@ -205,7 +286,7 @@ Describe 'Invoke-FeaturesStage' {
     BeforeAll {
         Import-Module (Join-Path $script:Root 'script/stages/Features.psm1') -Force
         function Initialize-Stage {
-            param([string[]]$States = @('Enabled'), $Wsl = [version]'2.6.1.0', [int]$ElevatedExit = 0)
+            param([string[]]$States = @('Enabled'), $Wsl = [version]'2.6.1.0', [int]$ElevatedExit = 0, [bool]$RebootPending = $false)
             $map = @{ VirtualMachinePlatform = $States[0] }
             if ($States.Count -gt 1) { $map['Microsoft-Hyper-V-All'] = $States[1] }
             # A closure cannot read the mock's own parameters, so each name gets a filtered mock.
@@ -215,7 +296,7 @@ Describe 'Invoke-FeaturesStage' {
             }
             Mock -ModuleName Features Get-WslVersion { $Wsl }.GetNewClosure()
             Mock -ModuleName Features Invoke-ElevatedScript { $ElevatedExit }.GetNewClosure()
-            Mock -ModuleName Features Invoke-WslCommand { 0 }
+            Mock -ModuleName Features Test-RebootPending { $RebootPending }.GetNewClosure()
             Mock -ModuleName Features Get-ElevatedLogPath { $null }
             Mock -ModuleName Features Write-Info {}
             Mock -ModuleName Features Write-Ok {}
@@ -228,14 +309,19 @@ Describe 'Invoke-FeaturesStage' {
         Initialize-Stage
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'done'
         Should-NotInvoke -ModuleName Features -CommandName Invoke-ElevatedScript
-        Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
+    }
+
+    It 'returns reboot-required without elevating when Windows reports a pending restart' {
+        Initialize-Stage -RebootPending $true
+        Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'reboot-required'
+        Should-NotInvoke -ModuleName Features -CommandName Invoke-ElevatedScript
     }
 
     It 'enables missing features through the elevated script' {
         Initialize-Stage -States @('Disabled')
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'done'
         Should-Invoke -ModuleName Features -CommandName Invoke-ElevatedScript -Times 1 -Exactly -ParameterFilter {
-            $Name -eq 'Enable-Features' -and $ArgumentList -contains 'VirtualMachinePlatform'
+            $Name -eq 'Enable-Features' -and $ArgumentList -contains 'VirtualMachinePlatform' -and $ArgumentList -notcontains '-InstallWsl'
         }
         # Other prompts (the wsl.exe installer) are not this repo's; the wording says so.
         Should-Invoke -ModuleName Features -CommandName Write-Info -ParameterFilter { $Message -like '*(one UAC prompt from this repo)' }
@@ -249,7 +335,6 @@ Describe 'Invoke-FeaturesStage' {
     It 'fails when the elevated script fails' {
         Initialize-Stage -States @('Disabled') -ElevatedExit 1
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'failed'
-        Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
     }
 
     It 'after a failed elevated run prints only the new elevated.log lines' {
@@ -261,7 +346,7 @@ Describe 'Invoke-FeaturesStage' {
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'failed'
         Should-Invoke -ModuleName Features -CommandName Write-Warn -Times 1 -Exactly -ParameterFilter { $Message -like '*new failure*' }
         Should-NotInvoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*old failure*' }
-        Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like "*failed while enabling*log: $log*" }
+        Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like "*elevated script failed*log: $log*" }
     }
 
     It 'fails with a warning when UAC is declined' {
@@ -271,24 +356,32 @@ Describe 'Invoke-FeaturesStage' {
         Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*UAC*' }
     }
 
-    It 'installs and updates WSL when wsl --version fails' {
+    It 'installs WSL through the elevated script, not wsl.exe directly, when wsl --version fails' {
         Initialize-Stage -Wsl $null
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'done'
-        Should-Invoke -ModuleName Features -CommandName Invoke-WslCommand -ParameterFilter { $ArgumentList -contains '--install' -and $ArgumentList -contains '--no-distribution' }
-        Should-Invoke -ModuleName Features -CommandName Invoke-WslCommand -ParameterFilter { $ArgumentList -contains '--update' }
+        Should-Invoke -ModuleName Features -CommandName Invoke-ElevatedScript -Times 1 -Exactly -ParameterFilter {
+            $Name -eq 'Enable-Features' -and $ArgumentList -contains '-InstallWsl' -and $ArgumentList -notcontains '-Name'
+        }
     }
 
     It 'installs WSL when it is below the minimum version' {
         Initialize-Stage -Wsl ([version]'2.0.0.0')
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'done'
-        Should-Invoke -ModuleName Features -CommandName Invoke-WslCommand -Times 2 -Exactly
+        Should-Invoke -ModuleName Features -CommandName Invoke-ElevatedScript -Times 1 -Exactly -ParameterFilter { $ArgumentList -contains '-InstallWsl' }
     }
 
-    It 'fails when wsl --install exits non-zero' {
-        Initialize-Stage -Wsl $null
-        Mock -ModuleName Features Invoke-WslCommand { 1 }
+    It 'enables features and installs WSL under one UAC prompt' {
+        Initialize-Stage -States @('Disabled') -Wsl $null
+        Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'done'
+        Should-Invoke -ModuleName Features -CommandName Invoke-ElevatedScript -Times 1 -Exactly -ParameterFilter {
+            ($ArgumentList -join ' ') -eq '-Name VirtualMachinePlatform -InstallWsl'
+        }
+    }
+
+    It 'fails when the elevated WSL install fails' {
+        Initialize-Stage -Wsl $null -ElevatedExit 1
         Invoke-FeaturesStage -Context (Get-Ctx) | Should-Be 'failed'
-        Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*exit code 1*' }
+        Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*elevated script failed*' }
     }
 
     It 'elevates exactly once for several missing features' {
@@ -311,7 +404,6 @@ Describe 'Invoke-FeaturesStage' {
         Invoke-FeaturesStage -Context $homeCtx | Should-Be 'failed'
         Invoke-FeaturesStage -Context $homeCtx -Plan | Should-Be 'failed'
         Should-NotInvoke -ModuleName Features -CommandName Invoke-ElevatedScript
-        Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
         Should-Invoke -ModuleName Features -CommandName Write-Warn -ParameterFilter { $Message -like '*lab profile needs Windows 11 Pro*' }
     }
 
@@ -319,7 +411,6 @@ Describe 'Invoke-FeaturesStage' {
         Initialize-Stage -States @('Disabled') -Wsl $null
         Invoke-FeaturesStage -Context (Get-Ctx) -Plan | Should-Be 'done'
         Should-NotInvoke -ModuleName Features -CommandName Invoke-ElevatedScript
-        Should-NotInvoke -ModuleName Features -CommandName Invoke-WslCommand
         Should-Invoke -ModuleName Features -CommandName Write-Info -ParameterFilter { $Message -like 'Would enable*VirtualMachinePlatform*' }
     }
 }

@@ -47,9 +47,7 @@ prompts on a first run, each from the source named:
 |---|---|
 | Git installer | README step 2 (`winget install Git.Git`), before this repository runs |
 | PowerShell 7 | stage-0 installs the latest stable package, which is MSIX: a per-user install that normally raises no prompt (ADR-016) |
-| Enable Windows features | this repository: `script/elevated/Enable-Features.ps1`, one prompt for all missing features |
-| `wsl --install --no-distribution` | wsl.exe elevates itself when WSL is missing or too old |
-| `wsl --update` | possibly, when wsl.exe elevates itself to update |
+| Enable Windows features and install WSL | this repository: `script/elevated/Enable-Features.ps1`, one prompt for all missing features plus `wsl --install --no-distribution` and `wsl --update` when WSL is missing or too old (ADR-018) |
 
 A re-run with everything in place raises none of them.
 
@@ -242,8 +240,11 @@ Windows features and WSL:
 
 - [ ] `wsl --version` on the inbox stub (before WSL is installed) returns without
       waiting for a keypress.
-- [ ] Exit codes of `wsl --install --no-distribution` and `wsl --update` before the
-      reboot.
+- [ ] Exit codes of `wsl --install --no-distribution` and `wsl --update`, run elevated by
+      `Enable-Features.ps1 -InstallWsl`, before the reboot (non-elevated, WSL 3.0.5's
+      installer fails: "The requested operation requires elevation", ADR-018).
+- [ ] After a run that enabled a feature but failed later, the re-run returns
+      reboot-required (CBS `RebootPending` present) before the WSL stage.
 - [ ] `Win32_OptionalFeature` `InstallState` read as a standard (non-elevated) user, for
       a feature that is enabled, one pending a restart and one disabled.
 - [ ] `EditionID` strings for Home and Pro (`Core`, `Professional`).

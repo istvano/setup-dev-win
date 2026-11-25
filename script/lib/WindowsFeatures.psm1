@@ -82,4 +82,20 @@ function Get-WslVersion {
     return $null
 }
 
-Export-ModuleMember -Function Get-RequiredFeatures, Get-FeatureState, Get-WslVersion
+function Test-RebootPending {
+    <#
+    .SYNOPSIS
+        True when Windows servicing reports a pending restart.
+    .DESCRIPTION
+        Reads the Component Based Servicing RebootPending key, which a feature
+        enable or package install sets until the next boot. Readable without
+        elevation. It catches a restart owed by an earlier run that failed after
+        enabling a feature, so the WSL stage never runs on a half-enabled platform.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    return [bool](Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')
+}
+
+Export-ModuleMember -Function Get-RequiredFeatures, Get-FeatureState, Get-WslVersion, Test-RebootPending

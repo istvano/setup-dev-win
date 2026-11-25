@@ -6,22 +6,6 @@ $PSNativeCommandUseErrorActionPreference = $true
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Common.psm1') -Force
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/WindowsFeatures.psm1') -Force
 
-function Invoke-WslCommand {
-    # Internal. Runs wsl.exe with its output streaming to the host (the download
-    # is long and the operator should see it), and returns the exit code.
-    [CmdletBinding()]
-    [OutputType([int])]
-    param([Parameter(Mandatory)][string[]]$ArgumentList)
-    $env:WSL_UTF8 = '1'
-    $previous = $PSNativeCommandUseErrorActionPreference
-    $PSNativeCommandUseErrorActionPreference = $false
-    try {
-        & wsl.exe @ArgumentList 2>&1 | Out-Host
-        return [int]$LASTEXITCODE
-    }
-    finally { $PSNativeCommandUseErrorActionPreference = $previous }
-}
-
 function Get-ElevatedLogPath {
     # Internal, mockable. Where script/elevated/Enable-Features.ps1 appends its
     # [warn]/[fail] lines; the same expression lives in that script, which imports
@@ -47,9 +31,11 @@ function Invoke-FeaturesStage {
     .SYNOPSIS
         The Features stage: Windows optional features, then the WSL package.
     .DESCRIPTION
-        Missing features are enabled by the one elevated script (a single UAC
-        prompt). WSL is installed or updated when absent or below MinWslVersion;
-        wsl.exe raises its own UAC prompt, so it is not elevated here.
+        Missing features are enabled, and WSL is installed and updated when absent
+        or below MinWslVersion, by one run of the elevated script: a single UAC
+        prompt (wsl.exe no longer elevates itself, ADR-018). A restart Windows
+        still reports as pending, for example from an earlier failed run, makes
+        the stage return reboot-required.
     .PARAMETER Context
         Run context: Profiles, DistroRoot, LinuxRepoUrl, LinuxRef, Plan, Edition.
     .PARAMETER Plan
@@ -91,15 +77,25 @@ function Invoke-FeaturesStage {
         return 'done'
     }
 
-    if ($missing.Count -gt 0) {
-        Write-Info "Enabling Windows features: $($missing -join ', ') (one UAC prompt from this repo)"
+    if ($missing.Count -gt 0 -or $wslNeeded) {
+        $steps = @()
+        $arguments = @()
+        if ($missing.Count -gt 0) {
+            $steps += "enable $($missing -join ', ')"
+            $arguments += @('-Name', ($missing -join ','))
+        }
+        if ($wslNeeded) {
+            $steps += "install WSL (found: $(if ($wsl) { $wsl } else { 'none' }), need >= $minWsl)"
+            $arguments += '-InstallWsl'
+        }
+        Write-Info "Elevated step: $($steps -join '; ') (one UAC prompt from this repo)"
         $log = Get-ElevatedLogPath
         $seen = Get-LogLineCount -Path $log
         try {
-            $code = Invoke-ElevatedScript -Name 'Enable-Features' -ArgumentList @('-Name', ($missing -join ','))
+            $code = Invoke-ElevatedScript -Name 'Enable-Features' -ArgumentList $arguments
         }
         catch {
-            Write-Warn "Could not run the elevated feature script (UAC declined?): $($_.Exception.Message)"
+            Write-Warn "Could not run the elevated script (UAC declined?): $($_.Exception.Message)"
             return 'failed'
         }
         if ($code -ne 0 -and $log -and (Test-Path -LiteralPath $log -PathType Leaf)) {
@@ -110,27 +106,16 @@ function Invoke-FeaturesStage {
             0 { }
             3010 { $rebootNeeded = $true }
             2 { Write-Warn 'The elevated script refused: a feature name is not allowlisted.'; return 'failed' }
-            1 { Write-Warn "The elevated script failed while enabling (details above; log: $(if ($log) { $log } else { 'elevated.log' }))."; return 'failed' }
+            1 { Write-Warn "The elevated script failed (details above; log: $(if ($log) { $log } else { 'elevated.log' }))."; return 'failed' }
             default { Write-Warn "The elevated script exited with code $code."; return 'failed' }
         }
     }
-    else {
-        Write-Ok 'Windows features already enabled.'
-    }
+    if ($missing.Count -eq 0) { Write-Ok 'Windows features already enabled.' }
+    if (-not $wslNeeded) { Write-Ok "WSL $wsl is current." }
 
-    if ($wslNeeded) {
-        Write-Info "Installing WSL (found: $(if ($wsl) { $wsl } else { 'none' }), need >= $minWsl)"
-        foreach ($arguments in @(@('--install', '--no-distribution'), @('--update'))) {
-            $exit = Invoke-WslCommand -ArgumentList $arguments
-            if ($exit -eq 3010) { $rebootNeeded = $true }
-            elseif ($exit -ne 0) {
-                Write-Warn "wsl.exe $($arguments -join ' ') failed with exit code $exit (output above)."
-                return 'failed'
-            }
-        }
-    }
-    else {
-        Write-Ok "WSL $wsl is current."
+    if (-not $rebootNeeded -and (Test-RebootPending)) {
+        Write-Info 'Windows reports a pending restart (for example from enabling a feature earlier).'
+        $rebootNeeded = $true
     }
 
     if ($rebootNeeded) { return 'reboot-required' }
