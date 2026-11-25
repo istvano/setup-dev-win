@@ -15,12 +15,21 @@ BeforeAll {
     $script:WriteFixture = { [System.IO.File]::WriteAllBytes($OutFile, $script:Bytes) }
     function script:New-Dir { Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N')) }
     function script:New-LockFile {
-        param([string]$Name = 'Ubuntu-26.04', [string]$Url = 'https://example.invalid/x.wsl',
-            [string]$Sha = ('a' * 64), [string]$Date = '2026-11-24')
+        param([string]$Name = 'Ubuntu-26.04', [string]$Source = 'https://example.invalid/DistributionInfo.json',
+            [string]$Extra = '')
         $path = Join-Path ([System.IO.Path]::GetTempPath()) ("lock-$([guid]::NewGuid().ToString('N')).psd1")
-        "@{ Name = '$Name'; Url = '$Url'; Sha256 = '$Sha'; Source = 'x'; CheckedOn = '$Date' }" |
-            Set-Content -LiteralPath $path -Encoding ascii
+        "@{ Name = '$Name'; Source = '$Source'; $Extra }" | Set-Content -LiteralPath $path -Encoding ascii
         $path
+    }
+    $script:Manifest = Join-Path $PSScriptRoot 'fixtures/distro/DistributionInfo.json'
+    $script:ManifestLock = @{ Name = 'Ubuntu-26.04'; Source = 'https://example.invalid/DistributionInfo.json' }
+    # The manifest object with one change applied to the Ubuntu-26.04 entry.
+    function script:Get-ManifestWith {
+        param([scriptblock]$Change)
+        $m = Get-Content -LiteralPath $script:Manifest -Raw | ConvertFrom-Json
+        $entry = @($m.ModernDistributions.Ubuntu | Where-Object Name -EQ 'Ubuntu-26.04')[0]
+        & $Change $m $entry
+        $m
     }
 }
 
@@ -32,7 +41,7 @@ Describe 'Save-VerifiedImage' {
     AfterEach { Remove-Item -LiteralPath $script:Dir -Recurse -Force -ErrorAction SilentlyContinue }
 
     It 'returns the path when the hash matches' {
-        $path = Save-VerifiedImage -Lock $script:Lock -Directory $script:Dir
+        $path = Save-VerifiedImage -Image $script:Lock -Directory $script:Dir
         $path | Should-Be (Join-Path $script:Dir 'test-image.wsl')
         Test-Path -LiteralPath $path | Should-BeTrue
         Test-Path -LiteralPath "$path.partial" | Should-BeFalse
@@ -40,7 +49,7 @@ Describe 'Save-VerifiedImage' {
 
     It 'throws and deletes the file on mismatch' {
         $bad = $script:Lock.Clone(); $bad.Sha256 = '0' * 64
-        { Save-VerifiedImage -Lock $bad -Directory $script:Dir } |
+        { Save-VerifiedImage -Image $bad -Directory $script:Dir } |
             Should-Throw -ExceptionMessage "*SHA256 mismatch for test-image.wsl: expected $('0' * 64), got $($script:GoodHash)*"
         @(Get-ChildItem -LiteralPath $script:Dir -Force).Count | Should-Be 0
     }
@@ -48,7 +57,7 @@ Describe 'Save-VerifiedImage' {
     It 'reuses a matching cached file without downloading' {
         New-Item -ItemType Directory -Path $script:Dir | Out-Null
         [System.IO.File]::WriteAllBytes((Join-Path $script:Dir 'test-image.wsl'), $script:Bytes)
-        Save-VerifiedImage -Lock $script:Lock -Directory $script:Dir | Out-Null
+        Save-VerifiedImage -Image $script:Lock -Directory $script:Dir | Out-Null
         Should-NotInvoke -CommandName Invoke-WebRequest -ModuleName Distro
     }
 
@@ -56,35 +65,41 @@ Describe 'Save-VerifiedImage' {
         New-Item -ItemType Directory -Path $script:Dir | Out-Null
         $final = Join-Path $script:Dir 'test-image.wsl'
         [System.IO.File]::WriteAllBytes($final, [byte[]](1, 2, 3))
-        Save-VerifiedImage -Lock $script:Lock -Directory $script:Dir | Out-Null
+        Save-VerifiedImage -Image $script:Lock -Directory $script:Dir | Out-Null
         Should-Invoke -CommandName Invoke-WebRequest -ModuleName Distro -Exactly -Times 1
         (Get-FileHash -LiteralPath $final -Algorithm SHA256).Hash.ToLowerInvariant() | Should-Be $script:GoodHash
     }
 
     It 'compares the hash case-insensitively' {
         $upper = $script:Lock.Clone(); $upper.Sha256 = $script:GoodHash.ToUpperInvariant()
-        Save-VerifiedImage -Lock $upper -Directory $script:Dir | Should-Be (Join-Path $script:Dir 'test-image.wsl')
+        Save-VerifiedImage -Image $upper -Directory $script:Dir | Should-Be (Join-Path $script:Dir 'test-image.wsl')
     }
 
-    It 'rejects an http:// lock Url without downloading' {
+    It 'creates the directory when it is missing' {
+        Test-Path -LiteralPath $script:Dir | Should-BeFalse
+        $null = Save-VerifiedImage -Image $script:Lock -Directory $script:Dir
+        Test-Path -LiteralPath $script:Dir -PathType Container | Should-BeTrue
+    }
+
+    It 'rejects an http:// image Url without downloading' {
         $http = $script:Lock.Clone(); $http.Url = 'http://example.invalid/test-image.wsl'
-        { Save-VerifiedImage -Lock $http -Directory $script:Dir } | Should-Throw -ExceptionMessage '*https*'
+        { Save-VerifiedImage -Image $http -Directory $script:Dir } | Should-Throw -ExceptionMessage '*https*'
         Should-NotInvoke -CommandName Invoke-WebRequest -ModuleName Distro
     }
 
     It 'restores ProgressPreference after the download' {
         $before = $ProgressPreference
-        Save-VerifiedImage -Lock $script:Lock -Directory $script:Dir | Out-Null
+        Save-VerifiedImage -Image $script:Lock -Directory $script:Dir | Out-Null
         $ProgressPreference | Should-Be $before
     }
 }
 
 Describe 'Get-DistroLock' {
-    It 'lock file in the repo passes validation' {
+    It 'lock file in the repo passes validation and holds only Name and Source' {
         $lock = Get-DistroLock
         $lock.Name | Should-Be 'Ubuntu-26.04'
-        ($lock.Url -match '^https://') | Should-BeTrue
-        ($lock.Sha256 -cmatch '^[0-9a-f]{64}$') | Should-BeTrue
+        $lock.Source | Should-Be 'https://raw.githubusercontent.com/microsoft/WSL/master/distributions/DistributionInfo.json'
+        @($lock.Keys | Sort-Object) | Should-BeCollection @('Name', 'Source')
     }
 
     It 'the repo lock file is ASCII-only' {
@@ -93,11 +108,11 @@ Describe 'Get-DistroLock' {
     }
 
     It 'rejects <Case>' -ForEach @(
-        @{ Case = 'an http Url'; Params = @{ Url = 'http://example.invalid/x.wsl' }; Msg = '*https*' }
-        @{ Case = 'an uppercase Sha256'; Params = @{ Sha = ('A' * 64) }; Msg = '*Sha256*' }
-        @{ Case = 'a short Sha256'; Params = @{ Sha = 'abc' }; Msg = '*Sha256*' }
+        @{ Case = 'an http Source'; Params = @{ Source = 'http://example.invalid/DistributionInfo.json' }; Msg = '*Source*https*' }
+        @{ Case = 'an empty Source'; Params = @{ Source = '' }; Msg = "*missing 'Source'*" }
         @{ Case = 'a bad Name'; Params = @{ Name = 'Debian' }; Msg = '*Name*' }
-        @{ Case = 'a bad CheckedOn'; Params = @{ Date = '24/11/2026' }; Msg = '*CheckedOn*' }
+        @{ Case = 'a frozen Url'; Params = @{ Extra = "Url = 'https://example.invalid/x.wsl'" }; Msg = "*'Url'*resolved*" }
+        @{ Case = 'a frozen Sha256'; Params = @{ Extra = "Sha256 = '$('a' * 64)'" }; Msg = "*'Sha256'*resolved*" }
     ) {
         $path = New-LockFile @Params
         try { { Get-DistroLock -Path $path } | Should-Throw -ExceptionMessage $Msg }
@@ -108,6 +123,98 @@ Describe 'Get-DistroLock' {
         $path = New-LockFile
         try { (Get-DistroLock -Path $path).Name | Should-Be 'Ubuntu-26.04' }
         finally { Remove-Item -LiteralPath $path -Force }
+    }
+}
+
+Describe 'Resolve-DistroImage' {
+    BeforeEach {
+        Mock -ModuleName Distro Invoke-RestMethod { Get-Content -LiteralPath $script:Manifest -Raw | ConvertFrom-Json }
+    }
+
+    It 'returns the Amd64 Url and the normalised Sha256 of the entry named in the lock' {
+        $image = Resolve-DistroImage -Lock $script:ManifestLock
+        $image.Name | Should-Be 'Ubuntu-26.04'
+        $image.Url | Should-Be 'https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-wsl-amd64.wsl'
+        $image.Sha256 | Should-BeString '48d56724b5c8e60f24893e83e73bbb58c60b3ca22fba3da977075420acd54104'
+        Should-Invoke -CommandName Invoke-RestMethod -ModuleName Distro -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'https://example.invalid/DistributionInfo.json' }
+    }
+
+    It 'parses a manifest returned as text' {
+        Mock -ModuleName Distro Invoke-RestMethod { Get-Content -LiteralPath $script:Manifest -Raw }
+        (Resolve-DistroImage -Lock $script:ManifestLock).Url | Should-BeLikeString '*ubuntu-26.04.1-wsl-amd64.wsl'
+    }
+
+    It 'accepts a Sha256 without the 0x prefix' {
+        $m = Get-ManifestWith { param($m, $e) $e.Amd64Url.Sha256 = ('AB' * 32) }
+        Mock -ModuleName Distro Invoke-RestMethod { $m }.GetNewClosure()
+        (Resolve-DistroImage -Lock $script:ManifestLock).Sha256 | Should-BeString ('ab' * 32)
+    }
+
+    It 'restores ProgressPreference' {
+        $before = $ProgressPreference
+        $null = Resolve-DistroImage -Lock $script:ManifestLock
+        $ProgressPreference | Should-Be $before
+    }
+
+    It 'refuses an http Source without fetching' {
+        { Resolve-DistroImage -Lock @{ Name = 'Ubuntu-26.04'; Source = 'http://example.invalid/d.json' } } |
+            Should-Throw -ExceptionMessage '*https*'
+        Should-NotInvoke -CommandName Invoke-RestMethod -ModuleName Distro
+    }
+
+    It 'fails closed when the manifest is unreachable' {
+        Mock -ModuleName Distro Invoke-RestMethod { throw 'No such host is known.' }
+        { Resolve-DistroImage -Lock $script:ManifestLock } |
+            Should-Throw -ExceptionMessage '*Could not read the distro manifest https://example.invalid/DistributionInfo.json*No such host*'
+    }
+
+    It 'fails closed when the manifest text is not JSON' {
+        Mock -ModuleName Distro Invoke-RestMethod { '<html>rate limited</html>' }
+        { Resolve-DistroImage -Lock $script:ManifestLock } | Should-Throw -ExceptionMessage '*not valid JSON*'
+    }
+
+    It 'fails closed when <Case>' -ForEach @(
+        @{
+            Case = 'ModernDistributions is missing'; Msg = '*ModernDistributions*'
+            Change = { param($m, $e) $m.PSObject.Properties.Remove('ModernDistributions') }
+        }
+        @{
+            Case = 'the entry is missing'; Msg = "*'Ubuntu-26.04'*not found*"
+            Change = { param($m, $e) $e.Name = 'Ubuntu-26.10' }
+        }
+        @{
+            Case = 'Amd64Url is missing'; Msg = '*Amd64Url*'
+            Change = { param($m, $e) $e.PSObject.Properties.Remove('Amd64Url') }
+        }
+        @{
+            Case = 'the Url is http'; Msg = '*Url*https*'
+            Change = { param($m, $e) $e.Amd64Url.Url = 'http://releases.ubuntu.com/x.wsl' }
+        }
+        @{
+            Case = 'the Url is empty'; Msg = '*Url*https*'
+            Change = { param($m, $e) $e.Amd64Url.Url = '' }
+        }
+        @{
+            Case = 'the Sha256 is short'; Msg = '*Sha256*64 hex*'
+            Change = { param($m, $e) $e.Amd64Url.Sha256 = '0xabc' }
+        }
+        @{
+            Case = 'the Sha256 is not hex'; Msg = '*Sha256*64 hex*'
+            Change = { param($m, $e) $e.Amd64Url.Sha256 = ('z' * 64) }
+        }
+        @{
+            Case = 'the Sha256 is missing'; Msg = '*Sha256*'
+            Change = { param($m, $e) $e.Amd64Url.PSObject.Properties.Remove('Sha256') }
+        }
+        @{
+            Case = 'the entry appears twice'; Msg = "*'Ubuntu-26.04'*more than once*"
+            Change = { param($m, $e) $m.ModernDistributions.Debian[0].Name = 'Ubuntu-26.04' }
+        }
+    ) {
+        $m = Get-ManifestWith -Change $Change
+        Mock -ModuleName Distro Invoke-RestMethod { $m }.GetNewClosure()
+        { Resolve-DistroImage -Lock $script:ManifestLock } | Should-Throw -ExceptionMessage $Msg
     }
 }
 

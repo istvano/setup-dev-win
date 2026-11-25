@@ -17,7 +17,9 @@ Describe 'Invoke-WslStage' {
         Mock -ModuleName Wsl Write-Info { $script:Infos.Add($Message) }
         Mock -ModuleName Wsl Write-Warn { }
         Mock -ModuleName Wsl Write-Ok { }
-        Mock -ModuleName Wsl Get-DistroLock { $script:Order.Add('lock'); @{ Name = 'Ubuntu-26.04' } }
+        Mock -ModuleName Wsl Get-DistroLock { $script:Order.Add('lock'); @{ Name = 'Ubuntu-26.04'; Source = 'https://x' } }
+        $script:Image = @{ Name = 'Ubuntu-26.04'; Url = 'https://x/img.wsl'; Sha256 = ('a' * 64) }
+        Mock -ModuleName Wsl Resolve-DistroImage { $script:Order.Add('resolve'); $script:Image }
         Mock -ModuleName Wsl Save-VerifiedImage { $script:Order.Add('save'); 'C:\img.wsl' }
         Mock -ModuleName Wsl Get-LinuxUserName { 'alice' }
         Mock -ModuleName Wsl Get-LinuxUserName { 'bob' } -ParameterFilter { $Override -eq 'bob' }
@@ -33,11 +35,13 @@ Describe 'Invoke-WslStage' {
 
     It 'runs the steps in order on a first install and returns done' {
         Invoke-WslStage -Context $script:Ctx | Should-Be 'done'
-        ($script:Order -join ',') | Should-Be 'lock,save,install:alice,placement,defaultuser,passwd,handoff'
+        ($script:Order -join ',') | Should-Be 'lock,resolve,save,install:alice,placement,defaultuser,passwd,handoff'
         Should-Invoke -CommandName Invoke-LinuxHandoff -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
             $Url -eq 'https://github.com/istvano/setup-dev-linux-wsl' -and $Ref -eq 'main' }
+        Should-Invoke -CommandName Resolve-DistroImage -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
+            $Lock.Name -eq 'Ubuntu-26.04' -and $Lock.Source -eq 'https://x' }
         Should-Invoke -CommandName Save-VerifiedImage -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
-            $Directory -eq (Join-Path ([System.IO.Path]::GetTempPath()) 'setup-dev-win') }
+            $Image.Url -eq 'https://x/img.wsl' -and $Image.Sha256 -eq ('a' * 64) }
     }
 
     It 'uses Context.LinuxUser when set, prints it before installing and does not re-persist it' {
@@ -99,6 +103,7 @@ Describe 'Invoke-WslStage' {
             Invoke-WslStage -Context $bad -Plan:$plan | Should-Be 'failed'
         }
         Should-NotInvoke -CommandName Get-DistroLock -ModuleName Wsl
+        Should-NotInvoke -CommandName Resolve-DistroImage -ModuleName Wsl
         Should-NotInvoke -CommandName Save-VerifiedImage -ModuleName Wsl
     }
 
@@ -108,6 +113,14 @@ Describe 'Invoke-WslStage' {
         Should-NotInvoke -CommandName Invoke-LinuxHandoff -ModuleName Wsl
         Should-NotInvoke -CommandName Set-DevUserPassword -ModuleName Wsl
         Should-Invoke -CommandName Write-Warn -ModuleName Wsl -ParameterFilter { $Message -like '*not under D:\WSL*' }
+    }
+
+    It 'fails without downloading when the manifest cannot be resolved' {
+        Mock -ModuleName Wsl Resolve-DistroImage { throw 'Could not read the distro manifest https://x: offline.' }
+        Invoke-WslStage -Context $script:Ctx | Should-Be 'failed'
+        Should-NotInvoke -CommandName Save-VerifiedImage -ModuleName Wsl
+        Should-NotInvoke -CommandName Install-DevDistro -ModuleName Wsl
+        Should-Invoke -CommandName Write-Warn -ModuleName Wsl -ParameterFilter { $Message -like '*Could not read the distro manifest*' }
     }
 
     It 'fails when the default user assertion throws' {
@@ -124,7 +137,7 @@ Describe 'Invoke-WslStage' {
 
     It 'with -Plan prints the steps and touches nothing' {
         Invoke-WslStage -Context $script:Ctx -Plan | Should-Be 'done'
-        foreach ($c in 'Get-DistroLock', 'Save-VerifiedImage', 'Install-DevDistro', 'Invoke-LinuxHandoff', 'Invoke-Native') {
+        foreach ($c in 'Get-DistroLock', 'Resolve-DistroImage', 'Save-VerifiedImage', 'Install-DevDistro', 'Invoke-LinuxHandoff', 'Invoke-Native') {
             Should-NotInvoke -CommandName $c -ModuleName Wsl
         }
         Should-Invoke -CommandName Write-Info -ModuleName Wsl -Times 4 -Exactly

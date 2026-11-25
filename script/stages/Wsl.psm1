@@ -63,7 +63,7 @@ function Invoke-WslStage {
         return 'failed'
     }
     if ($Plan) {
-        Write-Info 'Would read the pinned distro lock and download the image to %TEMP%\setup-dev-win, verifying its SHA256.'
+        Write-Info "Would resolve the newest image of the distro in wsl\ubuntu.lock.psd1 from Microsoft's DistributionInfo.json and download it to %TEMP%\setup-dev-win, verifying its SHA256."
         $who = if ($chosenUser) { $chosenUser } else { 'derived from the Windows user name' }
         Write-Info "Would install it as distro dev under $($Context.DistroRoot)\dev with Linux user $who (skipped when dev exists) and verify placement and the default user."
         Write-Info 'Would set the Linux user password with passwd when it is still locked.'
@@ -72,7 +72,9 @@ function Invoke-WslStage {
     }
     try {
         $lock = Get-DistroLock
-        $image = Save-VerifiedImage -Lock $lock -Directory (Join-Path ([System.IO.Path]::GetTempPath()) 'setup-dev-win')
+        $resolved = Resolve-DistroImage -Lock $lock
+        Write-Info "Distro image: $($resolved.Url)"
+        $image = Save-VerifiedImage -Image $resolved -Directory (Join-Path ([System.IO.Path]::GetTempPath()) 'setup-dev-win')
         if ($chosenUser) { $userName = Get-LinuxUserName -Override $chosenUser }
         else {
             $userName = Get-LinuxUserName

@@ -8,11 +8,12 @@ Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 function Get-DistroLock {
     <#
     .SYNOPSIS
-        Reads and validates the pinned distro image lock (wsl/ubuntu.lock.psd1).
+        Reads and validates the distro lock (wsl/ubuntu.lock.psd1).
     .DESCRIPTION
-        The lock is the supply-chain anchor for the Linux environment: image URL and
-        SHA256 copied from Microsoft's DistributionInfo.json. Throws a message naming
-        the field for every violation.
+        The lock names the distro (Name) and Microsoft's manifest (Source); the
+        image URL and SHA256 are resolved from that manifest at install time by
+        Resolve-DistroImage (W22, ADR-016). Throws a message naming the field for
+        every violation, including a frozen Url or Sha256 left in the file.
     .PARAMETER Path
         Lock file. Defaults to <repo>/wsl/ubuntu.lock.psd1; tests pass fixtures.
     #>
@@ -22,52 +23,125 @@ function Get-DistroLock {
 
     if (-not (Test-Path -LiteralPath $Path)) { throw "Distro lock not found: $Path" }
     $lock = Import-PowerShellDataFile -LiteralPath $Path
-    foreach ($key in 'Name', 'Url', 'Sha256', 'CheckedOn') {
+    foreach ($key in 'Name', 'Source') {
         if (-not $lock.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$lock[$key])) {
             throw "Distro lock $Path is missing '$key'."
+        }
+    }
+    foreach ($key in @($lock.Keys)) {
+        if ($key -notin 'Name', 'Source') {
+            throw "Distro lock $Path has '$key'; only Name and Source belong there: the image URL and SHA256 are resolved from Source at install time."
         }
     }
     if ([string]$lock.Name -cnotmatch '^Ubuntu-\d\d\.\d\d$') {
         throw "Distro lock Name '$($lock.Name)' must match ^Ubuntu-\d\d\.\d\d$."
     }
-    if (-not ([string]$lock.Url).StartsWith('https://', [System.StringComparison]::Ordinal)) {
-        throw "Distro lock Url '$($lock.Url)' must start with https://."
-    }
-    if ([string]$lock.Sha256 -cnotmatch '^[0-9a-f]{64}$') {
-        throw "Distro lock Sha256 must be 64 lowercase hex characters, got '$($lock.Sha256)'."
-    }
-    $date = [datetime]::MinValue
-    if (-not [datetime]::TryParseExact([string]$lock.CheckedOn, 'yyyy-MM-dd',
-            [System.Globalization.CultureInfo]::InvariantCulture,
-            [System.Globalization.DateTimeStyles]::None, [ref]$date)) {
-        throw "Distro lock CheckedOn '$($lock.CheckedOn)' must be a yyyy-MM-dd date."
+    if (-not ([string]$lock.Source).StartsWith('https://', [System.StringComparison]::Ordinal)) {
+        throw "Distro lock Source '$($lock.Source)' must start with https://."
     }
     $lock
+}
+
+function Get-JsonMember {
+    # Internal. A property of a ConvertFrom-Json object, or $null when absent
+    # (strict mode throws on a missing property).
+    param($Object, [string]$Name)
+    if ($null -eq $Object -or $Object -isnot [System.Management.Automation.PSCustomObject]) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    $property.Value
+}
+
+function Resolve-DistroImage {
+    <#
+    .SYNOPSIS
+        Resolves the image URL and SHA256 for Lock.Name from Microsoft's manifest.
+    .DESCRIPTION
+        Fetches Lock.Source (DistributionInfo.json) over https and takes the
+        Amd64Url of the ModernDistributions entry whose Name equals Lock.Name, so
+        the newest point release is installed (W22). The SHA256 is normalised
+        (0x prefix removed, lowercased) and must be 64 hex characters; the URL must
+        be https. Fails closed when the manifest is unreachable or not JSON, the
+        entry is missing or ambiguous, or a field is invalid: the hash is only as
+        good as the manifest, so there is no fallback.
+    .OUTPUTS
+        @{ Name; Url; Sha256 }, the input of Save-VerifiedImage.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param([Parameter(Mandatory)][hashtable]$Lock)
+
+    $name = [string]$Lock.Name
+    $source = [string]$Lock.Source
+    if (-not $source.StartsWith('https://', [System.StringComparison]::Ordinal)) {
+        throw "Refusing to read the distro manifest '$source': only https URLs are allowed."
+    }
+    $savedProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try { $manifest = Invoke-RestMethod -Uri $source }
+    catch {
+        throw "Could not read the distro manifest ${source}: $($_.Exception.Message). The image hash comes from it, so nothing was downloaded; check the network and re-run."
+    }
+    finally { $ProgressPreference = $savedProgress }
+
+    # raw.githubusercontent.com serves text/plain; parse it if it was not parsed.
+    if ($manifest -is [string]) {
+        try { $manifest = $manifest | ConvertFrom-Json }
+        catch { throw "The distro manifest $source is not valid JSON." }
+    }
+    $modern = Get-JsonMember -Object $manifest -Name 'ModernDistributions'
+    if ($null -eq $modern -or $modern -isnot [System.Management.Automation.PSCustomObject]) {
+        throw "The distro manifest $source has no ModernDistributions section."
+    }
+    $found = @(
+        foreach ($family in $modern.PSObject.Properties) {
+            foreach ($entry in @($family.Value)) {
+                if ([string](Get-JsonMember -Object $entry -Name 'Name') -ceq $name) { $entry }
+            }
+        }
+    )
+    if ($found.Count -eq 0) { throw "Distribution '$name' was not found in the distro manifest $source." }
+    if ($found.Count -gt 1) { throw "Distribution '$name' appears more than once in the distro manifest $source." }
+
+    $amd64 = Get-JsonMember -Object $found[0] -Name 'Amd64Url'
+    if ($null -eq $amd64) { throw "Distribution '$name' in the distro manifest has no Amd64Url." }
+    $url = [string](Get-JsonMember -Object $amd64 -Name 'Url')
+    if (-not $url.StartsWith('https://', [System.StringComparison]::Ordinal)) {
+        throw "Distribution '$name' in the distro manifest has Amd64Url.Url '$url'; it must start with https://."
+    }
+    $sha = ([string](Get-JsonMember -Object $amd64 -Name 'Sha256')).Trim().ToLowerInvariant()
+    if ($sha.StartsWith('0x', [System.StringComparison]::Ordinal)) { $sha = $sha.Substring(2) }
+    if ($sha -cnotmatch '^[0-9a-f]{64}$') {
+        throw "Distribution '$name' in the distro manifest has Amd64Url.Sha256 '$sha'; it must be 64 hex characters."
+    }
+    @{ Name = $name; Url = $url; Sha256 = $sha }
 }
 
 function Save-VerifiedImage {
     <#
     .SYNOPSIS
-        Downloads the locked image into Directory and verifies its SHA256.
+        Downloads the resolved image into Directory and verifies its SHA256.
     .DESCRIPTION
         Downloads to <leaf>.partial and renames only after the hash matches. A cached
         file is reused only when its hash matches; otherwise it is deleted and fetched
         again. A mismatch deletes the partial file and throws. https only.
+    .PARAMETER Image
+        @{ Url; Sha256 } from Resolve-DistroImage.
     .OUTPUTS
         The full path of the verified image.
     #>
     [CmdletBinding()]
     [OutputType([string])]
     param(
-        [Parameter(Mandatory)][hashtable]$Lock,
+        [Parameter(Mandatory)][hashtable]$Image,
         [Parameter(Mandatory)][string]$Directory
     )
 
-    $url = [string]$Lock.Url
+    $url = [string]$Image.Url
     if (-not $url.StartsWith('https://', [System.StringComparison]::Ordinal)) {
         throw "Refusing to download '$url': only https URLs are allowed."
     }
-    $expected = ([string]$Lock.Sha256).ToLowerInvariant()
+    $expected = ([string]$Image.Sha256).ToLowerInvariant()
     $leaf = [System.IO.Path]::GetFileName(([uri]$url).AbsolutePath)
     if ([string]::IsNullOrEmpty($leaf)) { throw "Cannot derive a file name from '$url'." }
 
@@ -414,6 +488,6 @@ function Assert-DistroPlacement {
     if ([int]$Distro.Version -ne 2) { throw "dev is WSL version $($Distro.Version); it must be WSL 2." }
 }
 
-Export-ModuleMember -Function Get-DistroLock, Save-VerifiedImage, Get-LinuxUserName, New-CloudInitUserData,
+Export-ModuleMember -Function Get-DistroLock, Resolve-DistroImage, Save-VerifiedImage, Get-LinuxUserName, New-CloudInitUserData,
 Get-RegisteredDistro, Install-DevDistro, Set-DevUserPassword, Assert-DistroPlacement, Assert-DefaultUser,
 Get-LastResultLine, Get-DistroRecoveryHint
