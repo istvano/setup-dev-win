@@ -25,6 +25,14 @@ $ErrorActionPreference = 'Stop'
 # The same refusal text as script\setup.ps1 (Runner.psm1).
 $script:ElevatedRefusal = 'Run from a normal (non-elevated) terminal; elevation is requested per step.'
 
+# What to do when winget cannot open its source (seen on a real machine: the first
+# winget use failed with 0x80070005 until the source was reset and updated).
+$script:WingetSourceFix = 'winget could not open its package source (0x80070005, Access is denied). ' +
+'To fix it: (1) in an administrator terminal run: winget source reset --force; ' +
+'(2) in a normal terminal run: winget source update; ' +
+'(3) if it still fails, update App Installer from the Microsoft Store (Library > Get updates); ' +
+'then re-run bootstrap.ps1.'
+
 function Test-IsAdministrator {
     <#
     .SYNOPSIS
@@ -384,6 +392,38 @@ function Invoke-Winget {
     return [pscustomobject]@{ ExitCode = $exitCode; Output = [string[]]$lines.ToArray() }
 }
 
+function Test-WingetSourceAccessDenied {
+    <#
+    .SYNOPSIS
+        True when a winget result shows the source access-denied failure (0x80070005).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][psobject]$Result)
+    # 0x80070005 as the signed 32-bit exit code winget returns.
+    if ([int]$Result.ExitCode -eq -2147024891) { return $true }
+    $text = @($Result.Output) -join "`n"
+    return [bool]($text -match '0x80070005|Failed to open the predefined source')
+}
+
+function Invoke-WingetSourceUpdate {
+    <#
+    .SYNOPSIS
+        Runs winget source update; throws the repair steps when the source is broken.
+    #>
+    [CmdletBinding()]
+    param()
+    Write-Host 'Updating winget sources...'
+    $result = Invoke-Winget -Arguments @('source', 'update')
+    if (Test-WingetSourceAccessDenied -Result $result) {
+        throw $script:WingetSourceFix
+    }
+    if ($result.ExitCode -ne 0) {
+        throw ("winget source update failed (exit code $($result.ExitCode)). Check the network connection " +
+            'and re-run bootstrap.ps1. If it keeps failing: ' + $script:WingetSourceFix)
+    }
+}
+
 function Install-PowerShell {
     <#
     .SYNOPSIS
@@ -412,6 +452,9 @@ function Install-PowerShell {
         '--accept-source-agreements', '--disable-interactivity'
     )
     $result = Invoke-Winget -Arguments $arguments
+    if (Test-WingetSourceAccessDenied -Result $result) {
+        throw $script:WingetSourceFix
+    }
     if ($result.ExitCode -ne 0) {
         throw "winget failed to install PowerShell (exit code $($result.ExitCode))."
     }
@@ -420,7 +463,7 @@ function Install-PowerShell {
 function Invoke-Bootstrap {
     <#
     .SYNOPSIS
-        The stage-0 sequence: assert, wait, settings, install, hand off.
+        The stage-0 sequence: assert, wait, settings, source health, install, hand off.
     .OUTPUTS
         Exactly one [int], the exit code of script\setup.ps1. Nothing else is
         emitted on the pipeline.
@@ -446,6 +489,9 @@ function Invoke-Bootstrap {
 
     $settingsPath = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\settings.json'
     Merge-WingetSettings -Path $settingsPath
+
+    # Always, not only before an install: the dotfiles stage installs with winget too.
+    Invoke-WingetSourceUpdate
 
     if (-not $SkipPowerShellInstall) {
         Install-PowerShell -Minimum $pins.MinPowerShell

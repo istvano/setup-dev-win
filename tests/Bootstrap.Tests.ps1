@@ -220,6 +220,41 @@ Describe 'Install-PowerShell' {
         Mock Invoke-Winget { [pscustomobject]@{ ExitCode = 5; Output = @() } }
         { Install-PowerShell -Minimum '7.6' } | Should-Throw -ExceptionMessage '*exit code 5*'
     }
+
+    It 'throws the source reset steps when the install fails with access denied' {
+        Mock Get-InstalledPowerShellVersion { $null }
+        Mock Invoke-Winget { [pscustomobject]@{ ExitCode = -2147024891; Output = @('Failed to open the predefined source.') } }
+        { Install-PowerShell -Minimum '7.6' } | Should-Throw -ExceptionMessage '*winget source reset --force*'
+    }
+}
+
+Describe 'Invoke-WingetSourceUpdate' {
+    It 'runs winget source update' {
+        Mock Invoke-Winget { [pscustomobject]@{ ExitCode = 0; Output = @('Done') } }
+        @(Invoke-WingetSourceUpdate).Count | Should-Be 0
+        Should-Invoke -CommandName Invoke-Winget -Times 1 -Exactly -ParameterFilter { ($Arguments -join ' ') -eq 'source update' }
+    }
+
+    It 'throws the reset steps when <Case>' -ForEach @(
+        @{ Case = 'the output names the predefined source'; Code = 1; Text = 'Failed to open the predefined source.' }
+        @{ Case = 'the output carries 0x80070005'; Code = 1; Text = '0x80070005 : Access is denied.' }
+        @{ Case = 'the exit code is 0x80070005'; Code = -2147024891; Text = '' }
+    ) {
+        $result = [pscustomobject]@{ ExitCode = $Code; Output = @($Text) }
+        Mock Invoke-Winget { $result }.GetNewClosure()
+        $thrown = $null
+        try { Invoke-WingetSourceUpdate } catch { $thrown = $_.Exception.Message }
+        $thrown | Should-BeLikeString '*0x80070005*'
+        $thrown | Should-BeLikeString '*administrator terminal*winget source reset --force*'
+        $thrown | Should-BeLikeString '*normal terminal*winget source update*'
+        $thrown | Should-BeLikeString '*App Installer*Microsoft Store*Library > Get updates*'
+        $thrown | Should-BeLikeString '*re-run bootstrap.ps1*'
+    }
+
+    It 'throws with the exit code on any other failure' {
+        Mock Invoke-Winget { [pscustomobject]@{ ExitCode = 7; Output = @('network down') } }
+        { Invoke-WingetSourceUpdate } | Should-Throw -ExceptionMessage '*winget source update failed (exit code 7)*'
+    }
 }
 
 Describe 'Resolve-PowerShell7' {
@@ -315,6 +350,7 @@ Describe 'Invoke-Bootstrap' {
         Mock Assert-SupportedWindows { }
         Mock Wait-Winget { }
         Mock Merge-WingetSettings { }
+        Mock Invoke-WingetSourceUpdate { }
         Mock Install-PowerShell { }
         Mock Sync-SessionPath { }
         Mock Resolve-PowerShell7 { 'pwsh-fake' }
@@ -336,6 +372,21 @@ Describe 'Invoke-Bootstrap' {
     It 'stops before the handoff when winget fails' {
         Mock Install-PowerShell { throw 'winget failed' }
         { Invoke-Bootstrap } | Should-Throw -ExceptionMessage '*winget failed*'
+        Should-NotInvoke -CommandName Invoke-Handoff
+    }
+
+    It 'updates the winget sources before installing' {
+        $script:Calls = New-Object -TypeName System.Collections.Generic.List[string]
+        Mock Invoke-WingetSourceUpdate { $script:Calls.Add('source') }
+        Mock Install-PowerShell { $script:Calls.Add('install') }
+        $null = Invoke-Bootstrap
+        ($script:Calls -join ',') | Should-Be 'source,install'
+    }
+
+    It 'stops before installing and handing off when the winget source is broken' {
+        Mock Invoke-WingetSourceUpdate { throw 'winget could not open its package source' }
+        { Invoke-Bootstrap } | Should-Throw -ExceptionMessage '*package source*'
+        Should-NotInvoke -CommandName Install-PowerShell
         Should-NotInvoke -CommandName Invoke-Handoff
     }
 
