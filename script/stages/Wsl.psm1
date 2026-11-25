@@ -75,17 +75,24 @@ function Invoke-WslStage {
         return 'done'
     }
     try {
-        $lock = Get-DistroLock
-        $resolved = Resolve-DistroImage -Lock $lock
-        Write-Info "Distro image: $($resolved.Url)"
-        $image = Save-VerifiedImage -Image $resolved -Directory $cache
+        # A registered dev needs no image: do not read the manifest or download
+        # 1 GB on every re-run.
+        $existing = Get-RegisteredDistro -Name 'dev'
+        $image = $null
+        if (-not $existing) {
+            $lock = Get-DistroLock
+            $resolved = Resolve-DistroImage -Lock $lock
+            Write-Info "Distro image: $($resolved.Url)"
+            $image = Save-VerifiedImage -Image $resolved -Directory $cache
+            Clear-ImageCache -Directory $cache -Keep $image
+        }
         if ($chosenUser) { $userName = Get-LinuxUserName -Override $chosenUser }
         else {
             $userName = Get-LinuxUserName
             Set-SetupSetting -Name 'linuxUser' -Value $userName
         }
         Write-Info "Linux user: $userName"
-        $record = Install-DevDistro -ImagePath $image -Root $Context.DistroRoot -UserName $userName
+        $record = if ($existing) { $existing } else { Install-DevDistro -ImagePath $image -Root $Context.DistroRoot -UserName $userName }
         Assert-DistroPlacement -Distro $record -Root $Context.DistroRoot
         # Install-DevDistro returns early for an existing dev, so on a re-run this is
         # the first check of the user and the recovery hint is added here.

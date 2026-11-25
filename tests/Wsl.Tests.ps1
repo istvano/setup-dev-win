@@ -21,6 +21,8 @@ Describe 'Invoke-WslStage' {
         $script:Image = @{ Name = 'Ubuntu-26.04'; Url = 'https://x/img.wsl'; Sha256 = ('a' * 64) }
         Mock -ModuleName Wsl Resolve-DistroImage { $script:Order.Add('resolve'); $script:Image }
         Mock -ModuleName Wsl Save-VerifiedImage { $script:Order.Add('save'); 'C:\img.wsl' }
+        Mock -ModuleName Wsl Clear-ImageCache { $script:Order.Add('clean') }
+        Mock -ModuleName Wsl Get-RegisteredDistro { $null }
         Mock -ModuleName Wsl Get-LinuxUserName { 'alice' }
         Mock -ModuleName Wsl Get-LinuxUserName { 'bob' } -ParameterFilter { $Override -eq 'bob' }
         Mock -ModuleName Wsl Set-SetupSetting { }
@@ -35,13 +37,35 @@ Describe 'Invoke-WslStage' {
 
     It 'runs the steps in order on a first install and returns done' {
         Invoke-WslStage -Context $script:Ctx | Should-Be 'done'
-        ($script:Order -join ',') | Should-Be 'lock,resolve,save,install:alice,placement,defaultuser,passwd,handoff'
+        ($script:Order -join ',') | Should-Be 'lock,resolve,save,clean,install:alice,placement,defaultuser,passwd,handoff'
         Should-Invoke -CommandName Invoke-LinuxHandoff -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
             $Url -eq 'https://github.com/istvano/setup-dev-linux-wsl' -and $Ref -eq 'main' }
         Should-Invoke -CommandName Resolve-DistroImage -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
             $Lock.Name -eq 'Ubuntu-26.04' -and $Lock.Source -eq 'https://x' }
         Should-Invoke -CommandName Save-VerifiedImage -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
             $Image.Url -eq 'https://x/img.wsl' -and $Image.Sha256 -eq ('a' * 64) }
+    }
+
+    It 'cleans the cache of other images after the verified download, keeping the new one' {
+        $null = Invoke-WslStage -Context $script:Ctx
+        Should-Invoke -CommandName Clear-ImageCache -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
+            $Directory -ceq 'D:\WSL\cache' -and $Keep -ceq 'C:\img.wsl' }
+    }
+
+    It 'does not clean the cache when the download fails' {
+        Mock -ModuleName Wsl Save-VerifiedImage { throw 'hash mismatch' }
+        Invoke-WslStage -Context $script:Ctx | Should-Be 'failed'
+        Should-NotInvoke -CommandName Clear-ImageCache -ModuleName Wsl
+    }
+
+    It 'skips the manifest, the download and the install when dev is already registered' {
+        Mock -ModuleName Wsl Get-RegisteredDistro { $script:Record }
+        Invoke-WslStage -Context $script:Ctx | Should-Be 'done'
+        foreach ($c in 'Get-DistroLock', 'Resolve-DistroImage', 'Save-VerifiedImage', 'Clear-ImageCache', 'Install-DevDistro') {
+            Should-NotInvoke -CommandName $c -ModuleName Wsl
+        }
+        ($script:Order -join ',') | Should-Be 'placement,defaultuser,passwd,handoff'
+        Should-Invoke -CommandName Assert-DistroPlacement -ModuleName Wsl -Times 1 -Exactly -ParameterFilter { $Distro.Name -eq 'dev' }
     }
 
     It 'downloads the image into the cache directory under the distro root, not the temp directory (<Root>)' -ForEach @(
