@@ -283,3 +283,31 @@ Trade-offs, accepted by the operator:
 - A later PowerShell can change behaviour the modules rely on; `#Requires -Version 7.6`
   is a floor, not a ceiling.
 - winget's own review (ADR-002) still covers the PowerShell and chezmoi installers.
+
+## ADR-017: Enable features with dism.exe
+
+Status: accepted. Operator ruling W23, from a real-machine failure (Windows 11 Home,
+PowerShell 7.7.0 MSIX, run elevated through the app alias).
+
+`Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All
+-NoRestart` failed with "Class not registered". The DISM PowerShell module activates a
+COM class that is not registered for the packaged (MSIX) pwsh, so the cmdlet cannot
+work in the shell this repository now installs (ADR-016). The elevated script itself
+ran and the log mechanism worked; only the cmdlet failed.
+
+`Enable-Features.ps1` now runs the native CLI, once per allowlisted name:
+`%SystemRoot%\System32\dism.exe /online /enable-feature /featurename:<name> /all
+/norestart`, with output captured by `Invoke-Dism`. Exit 0 is success, 3010 means a
+restart is needed (the script still exits 3010 if any feature needed it), and anything
+else writes a `[fail]` line with the exit code and dism's output to the elevated log
+and exits 1, after the existing warning that an earlier feature still owes a restart.
+It fails clearly if `SystemRoot` is empty or `dism.exe` is missing. The allowlist is
+unchanged.
+
+The repository invariant widens accordingly: `dism.exe` and the DISM cmdlets
+(`Enable-`, `Disable-`, `Get-WindowsOptionalFeature`) may appear in code only under
+`script/elevated`. State is still read through CIM (ADR-010).
+
+Superseded by implementation: the spec and plan text that names
+`Enable-WindowsOptionalFeature` (spec section 6.4 and plan task for `Enable-Features.ps1`)
+describes the cmdlet; the implementation uses `dism.exe` as above.

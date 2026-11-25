@@ -217,7 +217,8 @@ Stage-0 and elevation:
       kept with no install.
 - [ ] Elevation under the MSIX pwsh: `[Environment]::ProcessPath` is under
       `C:\Program Files\WindowsApps\` (record it), and the features stage's elevated
-      pwsh starts from the alias path and runs `Enable-Features.ps1`.
+      pwsh starts from the alias path and runs `Enable-Features.ps1`, which calls `dism.exe /online /enable-feature`
+      (ADR-017); a failure shows dism's exit code in `elevated.log`.
 - [ ] Re-run with the distro `dev` already registered: no manifest fetch and no download
       (the wsl stage prints no `Distro image:` line), and `<root>\cache` holds only the
       current `.wsl` after a fresh install.

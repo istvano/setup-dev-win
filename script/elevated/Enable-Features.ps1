@@ -49,6 +49,21 @@ function Write-ElevatedLine {
     }
 }
 
+function Invoke-Dism {
+    # The one place dism.exe runs. The DISM PowerShell module cannot activate its
+    # COM class inside packaged (MSIX) pwsh, so the native CLI is used (ADR-017).
+    # Returns @{ ExitCode; Output }; it never throws on a non-zero exit.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$FeatureName)
+    if (-not $env:SystemRoot) { throw 'SystemRoot is not set; cannot locate dism.exe.' }
+    $dismPath = Join-Path $env:SystemRoot 'System32\dism.exe'
+    if (-not (Test-Path -LiteralPath $dismPath -PathType Leaf)) { throw "dism.exe not found at $dismPath." }
+    $arguments = @('/online', '/enable-feature', "/featurename:$FeatureName", '/all', '/norestart')
+    $PSNativeCommandUseErrorActionPreference = $false
+    $output = & $dismPath @arguments 2>&1 | Out-String
+    return @{ ExitCode = $LASTEXITCODE; Output = $output }
+}
+
 function Invoke-FeatureRequest {
     [CmdletBinding()]
     [OutputType([int])]
@@ -60,7 +75,7 @@ function Invoke-FeatureRequest {
         Write-ElevatedLine -Level fail -Message 'No feature name given.'
         return 2
     }
-    # Exact, case-sensitive allowlist, checked before any cmdlet runs. A name that
+    # Exact, case-sensitive allowlist, checked before dism.exe runs. A name that
     # is not listed (for example the Windows Sandbox feature) is refused outright.
     foreach ($n in $names) {
         if ($n -cnotin $script:AllowedFeatures) {
@@ -72,15 +87,15 @@ function Invoke-FeatureRequest {
     $restart = $false
     foreach ($n in $names) {
         Write-ElevatedLine -Level info -Message "Enabling $n"
-        try {
-            $result = Enable-WindowsOptionalFeature -Online -FeatureName $n -All -NoRestart
-        }
-        catch {
+        $dism = Invoke-Dism -FeatureName $n
+        $exitCode = [int]$dism.ExitCode
+        if ($exitCode -eq 3010) { $restart = $true; continue }
+        if ($exitCode -ne 0) {
             # Failure wins over a pending restart, but say that the restart is owed.
             if ($restart) { Write-ElevatedLine -Level warn -Message 'An earlier feature was enabled and needs a restart even though this run failed.' }
-            throw
+            Write-ElevatedLine -Level fail -Message "dism.exe failed for $n with exit code ${exitCode}: $(([string]$dism.Output).Trim())"
+            return 1
         }
-        if ($result.RestartNeeded) { $restart = $true }
     }
     if ($restart) { return 3010 }
     return 0

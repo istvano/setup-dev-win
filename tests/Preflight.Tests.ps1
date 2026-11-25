@@ -21,7 +21,6 @@ BeforeAll {
         }.GetNewClosure()
         Mock -ModuleName Preflight Write-Info {}
         Mock -ModuleName Preflight Write-Warn {}
-        Mock -ModuleName Preflight Enable-WindowsOptionalFeature {}
     }
     function Get-TestContext {
         param([string[]]$Profiles = @('core'), [string]$DistroRoot = 'D:\WSL')
@@ -139,10 +138,9 @@ Describe 'Invoke-PreflightStage' {
         Invoke-PreflightStage -Context (Get-TestContext) -Plan | Should-Be 'failed'
     }
 
-    It 'fails before any feature cmdlet is called' {
+    It 'fails when virtualization is unavailable' {
         Initialize-Healthy
         Mock -ModuleName Preflight Test-VirtualizationAvailable { $false }
         Invoke-PreflightStage -Context (Get-TestContext) | Should-Be 'failed'
-        Should-NotInvoke -ModuleName Preflight -CommandName Enable-WindowsOptionalFeature
     }
 }

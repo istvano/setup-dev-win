@@ -86,53 +86,74 @@ Describe 'Enable-Features.ps1' {
         $script:ElevatedLogPath = Join-Path $TestDrive "elevated-$([guid]::NewGuid().ToString('N')).log"
     }
 
-    It 'refuses Containers-DisposableClientVM without calling Enable-WindowsOptionalFeature' {
-        Mock Enable-WindowsOptionalFeature { [pscustomobject]@{ RestartNeeded = $false } }
-        Mock Write-Host {}
-        Invoke-FeatureRequest -Name @('Containers-DisposableClientVM') | Should-Be 2
-        Should-NotInvoke Enable-WindowsOptionalFeature
-    }
-
-    It 'refuses the whole request when any one name is not allowed' {
-        Mock Enable-WindowsOptionalFeature { [pscustomobject]@{ RestartNeeded = $false } }
-        Mock Write-Host {}
-        Invoke-FeatureRequest -Name @('VirtualMachinePlatform,Containers-DisposableClientVM') | Should-Be 2
-        Should-NotInvoke Enable-WindowsOptionalFeature
-    }
-
-    It 'refuses a name that differs only in case' {
-        Mock Enable-WindowsOptionalFeature { [pscustomobject]@{ RestartNeeded = $false } }
-        Mock Write-Host {}
-        Invoke-FeatureRequest -Name @('virtualmachineplatform') | Should-Be 2
-        Should-NotInvoke Enable-WindowsOptionalFeature
-    }
-
-    It 'enables an allowed feature with -All -NoRestart and exits 0' {
-        Mock Enable-WindowsOptionalFeature { [pscustomobject]@{ RestartNeeded = $false } }
-        Mock Write-Host {}
-        Invoke-FeatureRequest -Name @('VirtualMachinePlatform') | Should-Be 0
-        Should-Invoke Enable-WindowsOptionalFeature -Times 1 -Exactly -ParameterFilter {
-            $Online -and $FeatureName -eq 'VirtualMachinePlatform' -and $All -and $NoRestart
+    BeforeEach {
+        function script:Initialize-Dism {
+            param([hashtable]$Results = @{})
+            $script:DismResults = $Results
+            $script:DismCalls = [System.Collections.Generic.List[string]]::new()
+            Mock Invoke-Dism {
+                $script:DismCalls.Add($FeatureName)
+                if ($script:DismResults.ContainsKey($FeatureName)) { $script:DismResults[$FeatureName] } else { @{ ExitCode = 0; Output = 'ok' } }
+            }
+            Mock Write-Host {}
         }
     }
 
-    It 'exits 3010 when any feature reports RestartNeeded' {
-        Mock Enable-WindowsOptionalFeature { [pscustomobject]@{ RestartNeeded = ($FeatureName -eq 'Microsoft-Hyper-V-All') } }
-        Mock Write-Host {}
-        Invoke-FeatureRequest -Name @('VirtualMachinePlatform,Microsoft-Hyper-V-All') | Should-Be 3010
-        Should-Invoke Enable-WindowsOptionalFeature -Times 2 -Exactly
+    It 'refuses Containers-DisposableClientVM without calling dism' {
+        Initialize-Dism
+        Invoke-FeatureRequest -Name @('Containers-DisposableClientVM') | Should-Be 2
+        Should-NotInvoke Invoke-Dism
     }
 
-    It 'still exits 1 when a later feature throws after RestartNeeded, naming the pending restart' {
-        Mock Enable-WindowsOptionalFeature { if ($FeatureName -eq 'VirtualMachinePlatform') { [pscustomobject]@{ RestartNeeded = $true } } else { throw 'boom' } }
-        Mock Write-Host {}
-        { Invoke-FeatureRequest -Name @('VirtualMachinePlatform,Microsoft-Hyper-V-All') } | Should-Throw
-        Should-Invoke Write-Host -ParameterFilter { $Object -like '*needs a restart*' }
+    It 'refuses the whole request when any one name is not allowed' {
+        Initialize-Dism
+        Invoke-FeatureRequest -Name @('VirtualMachinePlatform,Containers-DisposableClientVM') | Should-Be 2
+        Should-NotInvoke Invoke-Dism
+    }
+
+    It 'refuses a name that differs only in case' {
+        Initialize-Dism
+        Invoke-FeatureRequest -Name @('virtualmachineplatform') | Should-Be 2
+        Should-NotInvoke Invoke-Dism
+    }
+
+    It 'exits 0 when dism exits 0' {
+        Initialize-Dism
+        Invoke-FeatureRequest -Name @('VirtualMachinePlatform') | Should-Be 0
+        Should-Invoke Invoke-Dism -Times 1 -Exactly -ParameterFilter { $FeatureName -eq 'VirtualMachinePlatform' }
+    }
+
+    It 'exits 3010 when dism exits 3010' {
+        Initialize-Dism -Results @{ 'Microsoft-Hyper-V-All' = @{ ExitCode = 3010; Output = 'restart' } }
+        Invoke-FeatureRequest -Name @('VirtualMachinePlatform,Microsoft-Hyper-V-All') | Should-Be 3010
+        Should-Invoke Invoke-Dism -Times 2 -Exactly
+    }
+
+    It 'exits 1 and logs the exit code and output when dism fails with <Code>' -ForEach @(
+        @{ Code = 50 }, @{ Code = 87 }
+    ) {
+        Initialize-Dism -Results @{ VirtualMachinePlatform = @{ ExitCode = $Code; Output = "Error: $Code the parameter is incorrect" } }
+        Invoke-ElevatedMain -Name @('VirtualMachinePlatform') | Should-Be 1
+        $lines = @(Get-Content -LiteralPath $script:ElevatedLogPath)
+        $lines.Count | Should-Be 1
+        $lines[0] | Should-BeLikeString "* ``[fail``] *VirtualMachinePlatform*exit code ${Code}*Error: ${Code} the parameter is incorrect*"
+    }
+
+    It 'a failure after a 3010 exits 1 and names the owed restart, in the log too' {
+        Set-Content -LiteralPath $script:ElevatedLogPath -Value 'earlier line'
+        Initialize-Dism -Results @{
+            VirtualMachinePlatform = @{ ExitCode = 3010; Output = 'restart' }
+            'Microsoft-Hyper-V-All' = @{ ExitCode = 50; Output = 'nope' }
+        }
+        Invoke-ElevatedMain -Name @('VirtualMachinePlatform,Microsoft-Hyper-V-All') | Should-Be 1
+        $lines = @(Get-Content -LiteralPath $script:ElevatedLogPath)
+        $lines[0] | Should-Be 'earlier line'
+        $lines[1] | Should-BeLikeString '* `[warn`] *needs a restart*'
+        $lines[2] | Should-BeLikeString '* `[fail`] *Microsoft-Hyper-V-All*exit code 50*nope*'
     }
 
     It 'writes [fail] lines to elevated.log with a timestamp, and not [info] lines' {
-        Mock Enable-WindowsOptionalFeature { [pscustomobject]@{ RestartNeeded = $false } }
-        Mock Write-Host {}
+        Initialize-Dism
         Invoke-ElevatedMain -Name @('Containers-DisposableClientVM') | Should-Be 2
         Invoke-ElevatedMain -Name @('VirtualMachinePlatform') | Should-Be 0
         $lines = @(Get-Content -LiteralPath $script:ElevatedLogPath)
@@ -140,15 +161,28 @@ Describe 'Enable-Features.ps1' {
         $lines[0] | Should-MatchString '^\d{4}-\d\d-\d\dT\S+ \[fail\] Refusing feature .Containers-DisposableClientVM.'
     }
 
-    It 'logs the pending-restart warning and the failure, appending to earlier lines' {
-        Set-Content -LiteralPath $script:ElevatedLogPath -Value 'earlier line'
-        Mock Enable-WindowsOptionalFeature { if ($FeatureName -eq 'VirtualMachinePlatform') { [pscustomobject]@{ RestartNeeded = $true } } else { throw 'boom' } }
-        Mock Write-Host {}
-        Invoke-ElevatedMain -Name @('VirtualMachinePlatform,Microsoft-Hyper-V-All') | Should-Be 1
-        $lines = @(Get-Content -LiteralPath $script:ElevatedLogPath)
-        $lines[0] | Should-Be 'earlier line'
-        $lines[1] | Should-BeLikeString '* `[warn`] *needs a restart*'
-        $lines[2] | Should-BeLikeString '* `[fail`] boom'
+    It 'Invoke-Dism passes exactly the documented dism.exe arguments' {
+        $text = Get-Content -LiteralPath $script:ElevatedScript -Raw
+        $text | Should-MatchString ([regex]::Escape("@('/online', '/enable-feature', ""/featurename:`$FeatureName"", '/all', '/norestart')"))
+        $text | Should-MatchString ([regex]::Escape("& `$dismPath @arguments"))
+    }
+
+    It 'Invoke-Dism fails clearly when SystemRoot is empty' {
+        $saved = $env:SystemRoot
+        try {
+            Remove-Item Env:\SystemRoot -ErrorAction SilentlyContinue
+            { Invoke-Dism -FeatureName 'VirtualMachinePlatform' } | Should-Throw -ExceptionMessage '*SystemRoot*'
+        }
+        finally { if ($null -ne $saved) { $env:SystemRoot = $saved } }
+    }
+
+    It 'Invoke-Dism fails clearly when dism.exe is missing' {
+        $saved = $env:SystemRoot
+        try {
+            $env:SystemRoot = Join-Path $TestDrive 'no-windows'
+            { Invoke-Dism -FeatureName 'VirtualMachinePlatform' } | Should-Throw -ExceptionMessage '*dism.exe not found*'
+        }
+        finally { if ($null -ne $saved) { $env:SystemRoot = $saved } else { Remove-Item Env:\SystemRoot -ErrorAction SilentlyContinue } }
     }
 
     It 'run as a script, exits non-zero for a refused name and logs it under LOCALAPPDATA' {

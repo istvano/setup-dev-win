@@ -144,8 +144,8 @@ Describe 'Workflows' {
 }
 
 Describe 'Elevation invariants' {
-    It 'admin-only feature and policy cmdlets appear only under script/elevated' {
-        $pattern = 'Enable-WindowsOptionalFeature|Disable-WindowsOptionalFeature|Get-WindowsOptionalFeature|Set-ExecutionPolicy\b.*-Scope[\s:]+LocalMachine|Set-ExecutionPolicy\b.*LocalMachine.*-Scope'
+    It 'dism.exe, the DISM cmdlets and policy cmdlets appear only under script/elevated' {
+        $pattern = '\bdism\.exe\b|Enable-WindowsOptionalFeature|Disable-WindowsOptionalFeature|Get-WindowsOptionalFeature|Set-ExecutionPolicy\b.*-Scope[\s:]+LocalMachine|Set-ExecutionPolicy\b.*LocalMachine.*-Scope'
         $offenders = foreach ($file in $script:ScriptFiles) {
             $relative = $file.FullName.Substring($script:Root.Length + 1) -replace '\\', '/'
             if ($relative -like 'tests/*' -or $relative -like 'script/elevated/*') { continue }

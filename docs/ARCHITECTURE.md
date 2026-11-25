@@ -46,7 +46,8 @@ features stage prints after a failure (ADR-010). With the MSIX PowerShell these 
 
 UAC prompts on a first run, by source: the Git installer (README step 2, before this
 repository runs); `Enable-Features.ps1` (the only elevation this repository performs,
-through `script/elevated/`); `wsl --install --no-distribution`, which elevates itself;
+through `script/elevated/`, which enables features with the native `dism.exe`, not
+the DISM cmdlets that fail in MSIX pwsh, ADR-017); `wsl --install --no-distribution`, which elevates itself;
 possibly `wsl --update`. The PowerShell install is the per-user MSIX package and
 normally raises none. The repository itself elevates only through `script/elevated/`
 (ADR-004). Under the MSIX pwsh the elevated process is started from its app execution
