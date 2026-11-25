@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Stage-0: installs the pinned PowerShell 7 and hands off to script\setup.ps1.
+    Stage-0: installs the latest stable PowerShell 7 and hands off to script\setup.ps1.
 .DESCRIPTION
     Runs on a fresh Windows 11 x64 machine under Windows PowerShell 5.1:
         powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
@@ -223,24 +223,24 @@ function Get-InstalledPowerShellVersion {
 function Test-PowerShellVersionAccepted {
     <#
     .SYNOPSIS
-        True when Version is in the floor's major.minor (the LTS line) and >= Floor.
+        True when Version parses as a release version at or above Minimum.
     .DESCRIPTION
-        pins.psd1 PowerShell is a floor within the LTS minor (ADR-014): a later
-        7.6 patch that Windows Update or winget installed is accepted, a 7.7 or a
-        preview is not. Anything that does not parse as a version is rejected.
+        pins.psd1 MinPowerShell is a floor with no upper bound (ADR-016): any
+        stable PowerShell at or above it is accepted, newer ones included. A
+        preview ('7.7.0-preview.1') or anything else that does not parse as a
+        version is rejected.
     #>
     [CmdletBinding()]
     [OutputType([bool])]
     param(
         [AllowEmptyString()][AllowNull()][string]$Version,
-        [Parameter(Mandatory)][string]$Floor
+        [Parameter(Mandatory)][string]$Minimum
     )
     $have = $null
-    $want = [version]$Floor
     if (-not [System.Version]::TryParse([string]$Version, [ref]$have)) {
         return $false
     }
-    return [bool]($have.Major -eq $want.Major -and $have.Minor -eq $want.Minor -and $have -ge $want)
+    return [bool]($have -ge [version]$Minimum)
 }
 
 function Get-PowerShellVersionAt {
@@ -282,35 +282,53 @@ function Sync-SessionPath {
     $env:Path = $unique -join ';'
 }
 
-function Resolve-PinnedPowerShell {
+function Resolve-PowerShell7 {
     <#
     .SYNOPSIS
-        Returns the path of a pwsh.exe whose version passes the floor rule, or throws.
-    .PARAMETER Version
-        The floor (pins.psd1 PowerShell); see Test-PowerShellVersionAccepted.
+        Returns the path of a pwsh.exe at or above Minimum, or throws naming what was found.
+    .DESCRIPTION
+        Candidates, in order: pwsh.exe on PATH (for the MSIX package this is its
+        app execution alias in %LOCALAPPDATA%\Microsoft\WindowsApps, which is on
+        the user PATH), that alias by its full path, and the MSI's default path.
+        A candidate that cannot be run counts as not qualifying.
+    .PARAMETER Minimum
+        pins.psd1 MinPowerShell; see Test-PowerShellVersionAccepted.
     #>
     [CmdletBinding()]
     [OutputType([string])]
-    param([Parameter(Mandatory)][string]$Version)
+    param([Parameter(Mandatory)][string]$Minimum)
 
-    $found = $null
+    $candidates = @()
     $onPath = Get-Command -Name 'pwsh.exe' -ErrorAction SilentlyContinue
     if ($onPath) {
-        $found = Get-PowerShellVersionAt -Path $onPath.Source
-        if (Test-PowerShellVersionAccepted -Version $found -Floor $Version) { return $onPath.Source }
+        $candidates += [string]$onPath.Source
     }
-    $default = Join-Path (Join-Path (Join-Path $env:ProgramFiles 'PowerShell') '7') 'pwsh.exe'
-    $defaultVersion = $null
-    if (Test-Path -LiteralPath $default) {
-        $defaultVersion = Get-PowerShellVersionAt -Path $default
-        if (Test-PowerShellVersionAccepted -Version $defaultVersion -Floor $Version) { return $default }
+    else {
+        $candidates += ''
     }
-    $onPathText = 'not found'
-    if ($found) { $onPathText = $found }
-    $defaultText = 'not found'
-    if ($defaultVersion) { $defaultText = $defaultVersion }
-    $line = ([version]$Version).Major.ToString() + '.' + ([version]$Version).Minor.ToString()
-    throw "PowerShell $line.x at or above $Version is required but pwsh on PATH reports '$onPathText' and $default reports '$defaultText'."
+    $fallbacks = @()
+    if ($env:LOCALAPPDATA) { $fallbacks += $env:LOCALAPPDATA + '\Microsoft\WindowsApps\pwsh.exe' }
+    if ($env:ProgramFiles) { $fallbacks += $env:ProgramFiles + '\PowerShell\7\pwsh.exe' }
+
+    $report = @()
+    if (-not $candidates[0]) { $report += 'pwsh.exe on PATH not found' }
+    foreach ($fallback in $fallbacks) {
+        if (Test-Path -LiteralPath $fallback) { $candidates += $fallback }
+        else { $report += "$fallback not found" }
+    }
+    foreach ($candidate in $candidates) {
+        if (-not $candidate) { continue }
+        $version = $null
+        try { $version = Get-PowerShellVersionAt -Path $candidate }
+        catch { $version = $null }
+        if (Test-PowerShellVersionAccepted -Version $version -Minimum $Minimum) {
+            return $candidate
+        }
+        $report += "$candidate reports '$version'"
+    }
+    throw ("PowerShell $Minimum or later is required, but no qualifying pwsh.exe was found: " +
+        ($report -join '; ') + '. Re-run bootstrap.ps1 to install it, or install it with: ' +
+        'winget install --id Microsoft.PowerShell --source winget --exact')
 }
 
 function Invoke-Handoff {
@@ -345,44 +363,57 @@ function Invoke-Handoff {
 function Invoke-Winget {
     <#
     .SYNOPSIS
-        Runs winget.exe with the given arguments (a test seam).
+        Runs winget.exe, showing its output as it arrives; returns @{ ExitCode; Output }.
+    .DESCRIPTION
+        Each line goes to the console with Write-Host and is also kept, so callers
+        can recognise a failure by its text. The only pipeline output is the one
+        result object. stderr is not redirected: under Windows PowerShell 5.1 with
+        $ErrorActionPreference = 'Stop', 2>&1 turns the first stderr line of a
+        native command into a terminating error. winget writes its errors to stdout.
     #>
     [CmdletBinding()]
+    [OutputType([pscustomobject])]
     param([Parameter(Mandatory)][string[]]$Arguments)
-    # Out-Host: winget's output reaches the console and never the pipeline, so a
-    # caller's return value stays clean.
-    & winget.exe @Arguments | Out-Host
+    $lines = New-Object -TypeName System.Collections.Generic.List[string]
+    & winget.exe @Arguments | ForEach-Object {
+        $line = [string]$_
+        Write-Host $line
+        $lines.Add($line)
+    }
+    $exitCode = [int]$LASTEXITCODE
+    return [pscustomobject]@{ ExitCode = $exitCode; Output = [string[]]$lines.ToArray() }
 }
 
-function Install-PinnedPowerShell {
+function Install-PowerShell {
     <#
     .SYNOPSIS
-        Installs the pinned PowerShell MSI through winget unless an accepted one is present.
+        Installs the latest stable PowerShell 7 through winget unless an accepted one is present.
     .DESCRIPTION
-        An installed 7.6.x at or above the pin is kept (ADR-014). Otherwise the
-        exact pinned version is installed as the machine-wide MSI (--installer-type
-        wix --scope machine): it lands in Program Files, so the elevated steps can
-        relaunch it by path, and it avoids the MSIX package's file virtualization.
-        The MSI raises its own UAC prompt.
+        Any installed pwsh at or above Minimum is kept, newer ones included
+        (ADR-016). Otherwise winget installs the newest stable Microsoft.PowerShell
+        with no --version, --installer-type or --scope. That package is MSIX from
+        7.7 on: a per-user install that normally raises no UAC prompt, reached
+        through its app execution alias.
+    .PARAMETER Minimum
+        pins.psd1 MinPowerShell.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Version)
+    param([Parameter(Mandatory)][string]$Minimum)
 
     $installed = Get-InstalledPowerShellVersion
-    if (Test-PowerShellVersionAccepted -Version $installed -Floor $Version) {
-        Write-Host "PowerShell $installed is already installed (pin $Version or a later patch)."
+    if (Test-PowerShellVersionAccepted -Version $installed -Minimum $Minimum) {
+        Write-Host "PowerShell $installed is already installed ($Minimum or later is accepted)."
         return
     }
-    Write-Host "Installing PowerShell $Version (machine-wide MSI; expect a UAC prompt)..."
+    Write-Host 'Installing the latest stable PowerShell 7 with winget (this can take a minute)...'
     $arguments = @(
         'install', '--id', 'Microsoft.PowerShell', '--source', 'winget', '--exact',
-        '--version', $Version, '--installer-type', 'wix', '--scope', 'machine',
         '--silent', '--accept-package-agreements',
         '--accept-source-agreements', '--disable-interactivity'
     )
-    Invoke-Winget -Arguments $arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "winget failed to install PowerShell $Version (exit code $LASTEXITCODE)."
+    $result = Invoke-Winget -Arguments $arguments
+    if ($result.ExitCode -ne 0) {
+        throw "winget failed to install PowerShell (exit code $($result.ExitCode))."
     }
 }
 
@@ -417,14 +448,14 @@ function Invoke-Bootstrap {
     Merge-WingetSettings -Path $settingsPath
 
     if (-not $SkipPowerShellInstall) {
-        Install-PinnedPowerShell -Version $pins.PowerShell
+        Install-PowerShell -Minimum $pins.MinPowerShell
     }
     # No execution-policy change here: under the documented -ExecutionPolicy Bypass
     # launch it fails with ExecutionPolicyOverride, and pwsh 7 keeps its own
     # policy (ADR-003).
 
     Sync-SessionPath
-    $pwsh = Resolve-PinnedPowerShell -Version $pins.PowerShell
+    $pwsh = Resolve-PowerShell7 -Minimum $pins.MinPowerShell
     return [int](Invoke-Handoff -PwshPath $pwsh -SetupPath $setup -Profiles $Profiles)
 }
 
