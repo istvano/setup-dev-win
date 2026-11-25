@@ -62,8 +62,12 @@ function Invoke-WslStage {
         Write-Warn "Invalid LinuxRef '$($Context.LinuxRef)'."
         return 'failed'
     }
+    # The image is cached on the distro drive, not in %TEMP%: it stays off C:, and
+    # an MSIX pwsh's writes under AppData can be virtualised where wsl.exe cannot
+    # see them (W21).
+    $cache = "$(([string]$Context.DistroRoot).TrimEnd('\'))\cache"
     if ($Plan) {
-        Write-Info "Would resolve the newest image of the distro in wsl\ubuntu.lock.psd1 from Microsoft's DistributionInfo.json and download it to %TEMP%\setup-dev-win, verifying its SHA256."
+        Write-Info "Would resolve the newest image of the distro in wsl\ubuntu.lock.psd1 from Microsoft's DistributionInfo.json and download it to $cache, verifying its SHA256."
         $who = if ($chosenUser) { $chosenUser } else { 'derived from the Windows user name' }
         Write-Info "Would install it as distro dev under $($Context.DistroRoot)\dev with Linux user $who (skipped when dev exists) and verify placement and the default user."
         Write-Info 'Would set the Linux user password with passwd when it is still locked.'
@@ -74,7 +78,7 @@ function Invoke-WslStage {
         $lock = Get-DistroLock
         $resolved = Resolve-DistroImage -Lock $lock
         Write-Info "Distro image: $($resolved.Url)"
-        $image = Save-VerifiedImage -Image $resolved -Directory (Join-Path ([System.IO.Path]::GetTempPath()) 'setup-dev-win')
+        $image = Save-VerifiedImage -Image $resolved -Directory $cache
         if ($chosenUser) { $userName = Get-LinuxUserName -Override $chosenUser }
         else {
             $userName = Get-LinuxUserName

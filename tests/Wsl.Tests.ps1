@@ -44,6 +44,22 @@ Describe 'Invoke-WslStage' {
             $Image.Url -eq 'https://x/img.wsl' -and $Image.Sha256 -eq ('a' * 64) }
     }
 
+    It 'downloads the image into the cache directory under the distro root, not the temp directory (<Root>)' -ForEach @(
+        @{ Root = 'D:\WSL' }
+        @{ Root = 'D:\WSL\' }
+    ) {
+        $ctx = $script:Ctx.Clone(); $ctx.DistroRoot = $Root
+        $null = Invoke-WslStage -Context $ctx
+        Should-Invoke -CommandName Save-VerifiedImage -ModuleName Wsl -Times 1 -Exactly -ParameterFilter {
+            $Directory -ceq 'D:\WSL\cache' }
+    }
+
+    It 'with -Plan names the cache directory' {
+        Invoke-WslStage -Context $script:Ctx -Plan | Should-Be 'done'
+        @($script:Infos | Where-Object { $_ -like '*D:\WSL\cache*' }).Count | Should-Be 1
+        @($script:Infos | Where-Object { $_ -like '*TEMP*' }).Count | Should-Be 0
+    }
+
     It 'uses Context.LinuxUser when set, prints it before installing and does not re-persist it' {
         $ctx = $script:Ctx.Clone(); $ctx.LinuxUser = 'bob'
         Invoke-WslStage -Context $ctx | Should-Be 'done'
