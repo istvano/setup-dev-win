@@ -44,12 +44,10 @@ function Invoke-PreflightStage {
         $volume = Test-DataVolume -DriveLetter ([char]$Matches[1].ToUpperInvariant())
         if (-not $volume.Ok) {
             $message = "Distro volume check failed for $($Context.DistroRoot): $($volume.Reason)"
-            if ($volume.ContainsKey('Missing') -and $volume.Missing) {
-                # A machine without the default D: drive (W21): say how to pick another.
-                $message += ' To use another drive, re-run with -DistroRoot <drive>:\WSL, for example: ' +
-                'powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DistroRoot C:\WSL ' +
-                '(or pwsh -File script\setup.ps1 -DistroRoot C:\WSL).'
-            }
+            # Missing, not fixed or not NTFS (W21): say how to pick another drive.
+            $message += ' To use another drive, re-run with -DistroRoot <drive>:\WSL, for example: ' +
+            'powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DistroRoot C:\WSL ' +
+            '(or pwsh -File script\setup.ps1 -DistroRoot C:\WSL).'
             $failures.Add($message)
         }
     }
