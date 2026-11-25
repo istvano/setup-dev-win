@@ -159,6 +159,34 @@ function ConvertTo-CommandLineArgument {
     return '"' + $escaped + '"'
 }
 
+function Get-CurrentProcessPath {
+    # Internal, mockable. The executable of the running pwsh.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    return [string][Environment]::ProcessPath
+}
+
+function Get-ElevationHostPath {
+    # Internal. The pwsh.exe to elevate: the running one, except when it is the
+    # MSIX package under C:\Program Files\WindowsApps, whose files are locked down
+    # and not meant to be started by path; then its app execution alias in the
+    # user's WindowsApps directory (W21). [verify on real machine, Task 13]
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $processPath = Get-CurrentProcessPath
+    if ($processPath -notlike '*\WindowsApps\*') { return $processPath }
+    $alias = "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe"
+    if (-not $env:LOCALAPPDATA -or -not (Test-Path -LiteralPath $alias)) {
+        throw ("PowerShell runs from its MSIX package ($processPath), but its app execution alias $alias " +
+            'was not found, so no elevated pwsh can be started. Turn the pwsh.exe alias on in Settings > Apps > ' +
+            'Advanced app settings > App execution aliases, or reinstall with: ' +
+            'winget install --id Microsoft.PowerShell --source winget --exact')
+    }
+    return $alias
+}
+
 function Invoke-ElevatedScript {
     <#
     .SYNOPSIS
@@ -170,7 +198,9 @@ function Invoke-ElevatedScript {
     .NOTES
         Every token is quoted into one argument string (Start-Process would join an
         array with bare spaces). The running pwsh is elevated by absolute path, so
-        a pwsh planted on PATH is never used. A declined UAC prompt makes
+        a pwsh planted on PATH is never used; for the MSIX package that path is
+        its app execution alias under %LOCALAPPDATA%\Microsoft\WindowsApps, which
+        must exist [verify on real machine, Task 13]. A declined UAC prompt makes
         Start-Process throw; the error is not caught here and the caller must
         handle it.
     #>
@@ -181,9 +211,10 @@ function Invoke-ElevatedScript {
         [string[]]$ArgumentList = @()
     )
     $path = Resolve-ElevatedScriptPath -Name $Name
+    $hostPath = Get-ElevationHostPath
     $tokens = @('-NoProfile', '-File', $path) + $ArgumentList
     $arguments = ($tokens | ForEach-Object { ConvertTo-CommandLineArgument -Value $_ }) -join ' '
-    $process = Start-Process -FilePath ([Environment]::ProcessPath) -Verb RunAs -Wait -PassThru -ArgumentList $arguments
+    $process = Start-Process -FilePath $hostPath -Verb RunAs -Wait -PassThru -ArgumentList $arguments
     return [int]$process.ExitCode
 }
 
