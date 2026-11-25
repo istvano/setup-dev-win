@@ -221,21 +221,6 @@ function Merge-WingetSettings {
     [System.IO.File]::WriteAllText($Path, $json, (New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false))
 }
 
-function Get-InstalledPowerShellVersion {
-    <#
-    .SYNOPSIS
-        Returns the version string of the pwsh on PATH, or $null (a test seam).
-    #>
-    [CmdletBinding()]
-    [OutputType([string])]
-    param()
-    $pwsh = Get-Command -Name 'pwsh.exe' -ErrorAction SilentlyContinue
-    if (-not $pwsh) {
-        return $null
-    }
-    return (Get-PowerShellVersionAt -Path $pwsh.Source)
-}
-
 function Test-PowerShellVersionAccepted {
     <#
     .SYNOPSIS
@@ -298,20 +283,22 @@ function Sync-SessionPath {
     $env:Path = $unique -join ';'
 }
 
-function Resolve-PowerShell7 {
+function Find-PowerShell7 {
     <#
     .SYNOPSIS
-        Returns the path of a pwsh.exe at or above Minimum, or throws naming what was found.
+        Looks for a pwsh.exe at or above Minimum; returns @{ Path; Report }.
     .DESCRIPTION
         Candidates, in order: pwsh.exe on PATH (for the MSIX package this is its
         app execution alias in %LOCALAPPDATA%\Microsoft\WindowsApps, which is on
         the user PATH), that alias by its full path, and the MSI's default path.
-        A candidate that cannot be run counts as not qualifying.
+        A candidate that cannot be run counts as not qualifying. Path is $null
+        when none qualifies; Report then says what each candidate gave. Callers
+        run Sync-SessionPath first so a just-installed pwsh is on PATH.
     .PARAMETER Minimum
         pins.psd1 MinPowerShell; see Test-PowerShellVersionAccepted.
     #>
     [CmdletBinding()]
-    [OutputType([string])]
+    [OutputType([pscustomobject])]
     param([Parameter(Mandatory)][string]$Minimum)
 
     $candidates = @()
@@ -338,12 +325,30 @@ function Resolve-PowerShell7 {
         try { $version = Get-PowerShellVersionAt -Path $candidate }
         catch { $version = $null }
         if (Test-PowerShellVersionAccepted -Version $version -Minimum $Minimum) {
-            return $candidate
+            return [pscustomobject]@{ Path = $candidate; Report = [string[]]$report }
         }
         $report += "$candidate reports '$version'"
     }
+    return [pscustomobject]@{ Path = $null; Report = [string[]]$report }
+}
+
+function Resolve-PowerShell7 {
+    <#
+    .SYNOPSIS
+        Returns the path of a pwsh.exe at or above Minimum, or throws naming what was found.
+    .PARAMETER Minimum
+        pins.psd1 MinPowerShell; see Find-PowerShell7 for the candidates.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Minimum)
+
+    $found = Find-PowerShell7 -Minimum $Minimum
+    if ($found.Path) {
+        return [string]$found.Path
+    }
     throw ("PowerShell $Minimum or later is required, but no qualifying pwsh.exe was found: " +
-        ($report -join '; ') + '. Re-run bootstrap.ps1 to install it, or install it with: ' +
+        (@($found.Report) -join '; ') + '. Re-run bootstrap.ps1 to install it, or install it with: ' +
         'winget install --id Microsoft.PowerShell --source winget --exact')
 }
 
@@ -443,6 +448,22 @@ function Test-WingetSourceAccessDenied {
     return [bool]($text -match '0x80070005|Failed to open the predefined source')
 }
 
+function Test-WingetSourceOpenFailure {
+    <#
+    .SYNOPSIS
+        True when winget's output itself says the package source could not be opened.
+    .DESCRIPTION
+        Text only, no exit code: an install can exit non-zero for many reasons
+        (no applicable upgrade, a network error), and only this message means
+        the source is broken.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][psobject]$Result)
+    $text = @($Result.Output) -join "`n"
+    return [bool]($text -match 'Failed to open the predefined source')
+}
+
 function Invoke-WingetSourceUpdate {
     <#
     .SYNOPSIS
@@ -451,7 +472,7 @@ function Invoke-WingetSourceUpdate {
     [CmdletBinding()]
     param()
     Write-Host 'Updating winget sources...'
-    $result = Invoke-Winget -Arguments @('source', 'update')
+    $result = Invoke-Winget -Arguments @('source', 'update', '--name', 'winget')
     if (Test-WingetSourceAccessDenied -Result $result) {
         throw $script:WingetSourceFix
     }
@@ -464,7 +485,7 @@ function Invoke-WingetSourceUpdate {
 function Install-PowerShell {
     <#
     .SYNOPSIS
-        Installs the latest stable PowerShell 7 through winget unless an accepted one is present.
+        Installs the latest stable PowerShell 7 through winget unless a qualifying one is present.
     .DESCRIPTION
         Any installed pwsh at or above Minimum is kept, newer ones included
         (ADR-016). Otherwise winget installs the newest stable Microsoft.PowerShell
@@ -477,9 +498,11 @@ function Install-PowerShell {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Minimum)
 
-    $installed = Get-InstalledPowerShellVersion
-    if (Test-PowerShellVersionAccepted -Version $installed -Minimum $Minimum) {
-        Write-Host "PowerShell $installed is already installed ($Minimum or later is accepted)."
+    # The same candidates and the same can-it-run check as Resolve-PowerShell7:
+    # a pwsh the handoff would accept is never reinstalled.
+    Sync-SessionPath
+    if ((Find-PowerShell7 -Minimum $Minimum).Path) {
+        Write-Host "A PowerShell $Minimum or later is already installed."
         return
     }
     Write-Host 'Installing the latest stable PowerShell 7 with winget (this can take a minute)...'
@@ -489,10 +512,16 @@ function Install-PowerShell {
         '--accept-source-agreements', '--disable-interactivity'
     )
     $result = Invoke-Winget -Arguments $arguments
-    if (Test-WingetSourceAccessDenied -Result $result) {
+    if (Test-WingetSourceOpenFailure -Result $result) {
         throw $script:WingetSourceFix
     }
     if ($result.ExitCode -ne 0) {
+        # winget reports "no applicable upgrade" with a non-zero code while a
+        # qualifying pwsh may already be present: look once more before failing.
+        Sync-SessionPath
+        if ((Find-PowerShell7 -Minimum $Minimum).Path) {
+            return
+        }
         throw "winget failed to install PowerShell (exit code $($result.ExitCode))."
     }
 }

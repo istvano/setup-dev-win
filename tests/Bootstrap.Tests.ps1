@@ -181,28 +181,56 @@ Describe 'Test-PowerShellVersionAccepted' {
 }
 
 Describe 'Install-PowerShell' {
-    It 'skips when an accepted version is already installed (<Installed>)' -ForEach @(
-        @{ Installed = '7.6.0' }
-        @{ Installed = '7.7.0' }
-    ) {
-        Mock Get-InstalledPowerShellVersion ([scriptblock]::Create("'$Installed'"))
+    BeforeEach {
+        # Sync-SessionPath edits this session's PATH; keep it out of the test run.
+        Mock Sync-SessionPath { }
+        $script:Missing = [pscustomobject]@{ Path = $null; Report = @('none') }
+        $script:Found = [pscustomobject]@{ Path = 'C:\x\pwsh.exe'; Report = @() }
+    }
+
+    It 'skips when a qualifying pwsh is found' {
+        Mock Find-PowerShell7 { $script:Found }
         Mock Invoke-Winget { }
         Install-PowerShell -Minimum '7.6'
         Should-NotInvoke -CommandName Invoke-Winget
     }
 
-    It 'installs when the installed version is <Installed>' -ForEach @(
-        @{ Installed = '7.5.13' }
-        @{ Installed = '' }
-    ) {
-        Mock Get-InstalledPowerShellVersion ([scriptblock]::Create("'$Installed'"))
+    It 'syncs the session PATH before looking' {
+        Mock Find-PowerShell7 { $script:Found }
+        Install-PowerShell -Minimum '7.6'
+        Should-Invoke -CommandName Sync-SessionPath -Times 1 -Exactly
+    }
+
+    It 'asks for the same minimum it was given' {
+        Mock Find-PowerShell7 { $script:Found }
+        Install-PowerShell -Minimum '7.6'
+        Should-Invoke -CommandName Find-PowerShell7 -Times 1 -Exactly -ParameterFilter { $Minimum -eq '7.6' }
+    }
+
+    It 'uses the real candidate list: an alias-only pwsh counts as installed' {
+        $savedLocal = $env:LOCALAPPDATA
+        $env:LOCALAPPDATA = 'C:\Users\a\AppData\Local'
+        try {
+            $alias = 'C:\Users\a\AppData\Local\Microsoft\WindowsApps\pwsh.exe'
+            Mock Get-Command { $null }
+            Mock Test-Path { $LiteralPath -eq $alias }
+            Mock Get-PowerShellVersionAt { '7.7.0' }
+            Mock Invoke-Winget { }
+            Install-PowerShell -Minimum '7.6'
+            Should-NotInvoke -CommandName Invoke-Winget
+        }
+        finally { $env:LOCALAPPDATA = $savedLocal }
+    }
+
+    It 'installs when no qualifying pwsh is found' {
+        Mock Find-PowerShell7 { $script:Missing }
         Mock Invoke-Winget { [pscustomobject]@{ ExitCode = 0; Output = @() } }
         Install-PowerShell -Minimum '7.6'
         Should-Invoke -CommandName Invoke-Winget -Times 1 -Exactly
     }
 
     It 'installs the latest stable package with no version, installer type or scope' {
-        Mock Get-InstalledPowerShellVersion { $null }
+        Mock Find-PowerShell7 { $script:Missing }
         Mock Invoke-Winget { $script:Captured = $Arguments; [pscustomobject]@{ ExitCode = 0; Output = @() } }
         Install-PowerShell -Minimum '7.6'
         ($script:Captured -join ' ') | Should-Be ('install --id Microsoft.PowerShell --source winget --exact --silent ' +
@@ -210,19 +238,37 @@ Describe 'Install-PowerShell' {
     }
 
     It 'returns nothing on the pipeline' {
-        Mock Get-InstalledPowerShellVersion { $null }
+        Mock Find-PowerShell7 { $script:Missing }
         Mock Invoke-Winget { [pscustomobject]@{ ExitCode = 0; Output = @('noise') } }
         @(Install-PowerShell -Minimum '7.6').Count | Should-Be 0
     }
 
-    It 'throws when winget returns a failure code' {
-        Mock Get-InstalledPowerShellVersion { $null }
-        Mock Invoke-Winget { [pscustomobject]@{ ExitCode = 5; Output = @() } }
+    It 'throws with the exit code when winget fails and still nothing qualifies' {
+        Mock Find-PowerShell7 { $script:Missing }
+        Mock Invoke-Winget { [pscustomobject]@{ ExitCode = 5; Output = @('some other error') } }
         { Install-PowerShell -Minimum '7.6' } | Should-Throw -ExceptionMessage '*exit code 5*'
     }
 
-    It 'throws the source reset steps when the install fails with access denied' {
-        Mock Get-InstalledPowerShellVersion { $null }
+    It 'does not blame the source for an ordinary install failure' {
+        Mock Find-PowerShell7 { $script:Missing }
+        Mock Invoke-Winget { [pscustomobject]@{ ExitCode = -2147024891; Output = @('Access is denied to something else') } }
+        $thrown = $null
+        try { Install-PowerShell -Minimum '7.6' } catch { $thrown = $_.Exception.Message }
+        $thrown | Should-BeLikeString '*winget failed to install PowerShell (exit code -2147024891)*'
+        $thrown | Should-NotBeLikeString '*winget source reset*'
+    }
+
+    It 'resolves again after a non-zero exit and accepts the pwsh that is there' {
+        $script:Looks = 0
+        Mock Find-PowerShell7 { $script:Looks++; if ($script:Looks -eq 1) { $script:Missing } else { $script:Found } }
+        Mock Invoke-Winget { [pscustomobject]@{ ExitCode = -1978335189; Output = @('No applicable upgrade found.') } }
+        Install-PowerShell -Minimum '7.6'
+        Should-Invoke -CommandName Find-PowerShell7 -Times 2 -Exactly
+        Should-Invoke -CommandName Sync-SessionPath -Times 2 -Exactly
+    }
+
+    It 'throws the source reset steps when the install output names the predefined source' {
+        Mock Find-PowerShell7 { $script:Missing }
         Mock Invoke-Winget { [pscustomobject]@{ ExitCode = -2147024891; Output = @('Failed to open the predefined source.') } }
         { Install-PowerShell -Minimum '7.6' } | Should-Throw -ExceptionMessage '*winget source reset --force*'
     }
@@ -232,7 +278,7 @@ Describe 'Invoke-WingetSourceUpdate' {
     It 'runs winget source update' {
         Mock Invoke-Winget { [pscustomobject]@{ ExitCode = 0; Output = @('Done') } }
         @(Invoke-WingetSourceUpdate).Count | Should-Be 0
-        Should-Invoke -CommandName Invoke-Winget -Times 1 -Exactly -ParameterFilter { ($Arguments -join ' ') -eq 'source update' }
+        Should-Invoke -CommandName Invoke-Winget -Times 1 -Exactly -ParameterFilter { ($Arguments -join ' ') -eq 'source update --name winget' }
     }
 
     It 'throws the reset steps when <Case>' -ForEach @(
