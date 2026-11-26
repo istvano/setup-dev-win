@@ -16,6 +16,21 @@ BeforeAll {
         param([Parameter(Mandatory)][string]$Path)
         Get-Content -LiteralPath $Path | Where-Object { $_ -notmatch '^\s*#' }
     }
+
+    # Executable code only: block comments, comment lines and the CONTENTS of string literals
+    # are dropped (each literal is kept as an empty pair of quotes). A recommendation may
+    # therefore name a command such as Disable-WindowsOptionalFeature as text, but never run
+    # it. Simple on purpose: it scans line by line and does not understand here-strings, so
+    # the posture files do not use them.
+    function script:Get-CodeLineNoString {
+        param([Parameter(Mandatory)][string]$Path)
+        $text = (Get-Content -LiteralPath $Path -Raw) -replace '(?s)<#.*?#>', ''
+        $text -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' } |
+            ForEach-Object { [regex]::Replace($_, '"(?:[^"`]|`.)*"|''(?:[^'']|'''')*''', '""') }
+    }
+
+    # The files that implement the read-only posture report.
+    $script:PostureFiles = @('script/lib/PostureChecks.psm1', 'script/hardening-check.ps1')
 }
 
 Describe 'Repository invariants' {
@@ -176,9 +191,49 @@ Describe 'Elevation invariants' {
         $offenders = foreach ($file in $script:ScriptFiles) {
             $relative = $file.FullName.Substring($script:Root.Length + 1) -replace '\\', '/'
             if ($relative -like 'tests/*' -or $relative -like 'script/elevated/*') { continue }
-            if ((Get-CodeLine -Path $file.FullName) -match $pattern) { $relative }
+            # The posture files may name these commands in recommendation strings (text, not code).
+            $lines = if ($relative -in $script:PostureFiles) { Get-CodeLineNoString -Path $file.FullName } else { Get-CodeLine -Path $file.FullName }
+            if ($lines -match $pattern) { $relative }
         }
         @($offenders) | Should-BeCollection @() -Because 'only script/elevated may change machine state'
+    }
+
+    It 'the posture report is read-only: no write, no state change, no elevation in code' {
+        $forbidden = @(
+            '\bSet-(?!StrictMode\b)\w'
+            '\bNew-ItemProperty\b|\bNew-Item\b|\bSet-ItemProperty\b'
+            '\bRemove-\w'
+            '\bEnable-\w'
+            '\bDisable-\w'
+            '\bnetsh(\.exe)?\b.*\b(add|set|delete)\b'
+            'Start-Process\b.*-Verb\s+RunAs'
+            'Invoke-ElevatedScript'
+        )
+        foreach ($relative in $script:PostureFiles) {
+            $path = Join-Path $script:Root $relative
+            Test-Path -LiteralPath $path | Should-BeTrue -Because "$relative must exist"
+            $code = @(Get-CodeLineNoString -Path $path)
+            foreach ($pattern in $forbidden) {
+                @($code | Where-Object { $_ -match $pattern }) | Should-BeCollection @() -Because "$relative must not match $pattern"
+            }
+            # The native command's verb is a string token, so the scan above cannot see it.
+            @(Get-CodeLine -Path $path | Where-Object { $_ -match '''(add|set|delete)''' }) | Should-BeCollection @() -Because "$relative passes no add/set/delete verb to a native command"
+        }
+    }
+
+    It 'the posture scan itself refuses code but allows the same words in a string' {
+        $temp = Join-Path ([System.IO.Path]::GetTempPath()) "posture-scan-$([guid]::NewGuid().ToString('N')).ps1"
+        try {
+            Set-Content -LiteralPath $temp -Value @(
+                "`$rec = 'Disable-WindowsOptionalFeature -Online (elevated).'"
+                '<# Remove-Item in help text #>'
+                'Remove-Item -Path x'
+            )
+            $code = @(Get-CodeLineNoString -Path $temp)
+            @($code | Where-Object { $_ -match '\bDisable-\w' }).Count | Should-Be 0
+            @($code | Where-Object { $_ -match '\bRemove-\w' }).Count | Should-Be 1
+        }
+        finally { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
     }
 
     It 'Containers-DisposableClientVM appears only in Enable-Features.ps1 (code) and tests' {
