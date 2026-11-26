@@ -26,7 +26,11 @@ Describe 'profile list' {
 
 Describe 'catalogue' {
     It 'every Id is a well-formed winget id' {
-        $bad = @(Get-AppPackages -Profiles (Get-ValidProfiles) | Where-Object { $_.Id -notmatch '^[A-Za-z0-9][A-Za-z0-9.+_-]*\.[A-Za-z0-9.+_-]+$' })
+        # winget ids are Publisher.Package; Microsoft Store product ids are 12 upper-case letters/digits.
+        $bad = @(Get-AppPackages -Profiles (Get-ValidProfiles) | Where-Object {
+                if ($_.ContainsKey('Source') -and $_.Source -eq 'msstore') { $_.Id -cnotmatch '^[0-9A-Z]{12}$' }
+                else { $_.Id -notmatch '^[A-Za-z0-9][A-Za-z0-9.+_-]*\.[A-Za-z0-9.+_-]+$' }
+            })
         $bad.Count | Should-Be 0
     }
     It 'no Id appears in two profiles' {
@@ -45,7 +49,7 @@ Describe 'catalogue' {
         @{ Profile = 'security'; Ids = @('Bitwarden.Bitwarden', 'Henry++.simplewall') }
         @{ Profile = 'productivity'; Ids = @('Obsidian.Obsidian') }
         @{ Profile = 'backup'; Ids = @('restic.restic', 'Rclone.Rclone') }
-        @{ Profile = 'productivity-extra'; Ids = @('Google.Chrome', 'Mozilla.Firefox', 'SlackTechnologies.Slack', 'Anthropic.Claude', 'OpenAI.ChatGPT', 'OBSProject.OBSStudio', 'mpv.net', 'Tailscale.Tailscale', 'OpenVPNTechnologies.OpenVPN') }
+        @{ Profile = 'productivity-extra'; Ids = @('Google.Chrome', 'Mozilla.Firefox', 'SlackTechnologies.Slack', 'Anthropic.Claude', '9PLM9XGG6VKS', 'OBSProject.OBSStudio', 'mpv.net', 'Tailscale.Tailscale', 'OpenVPNTechnologies.OpenVPN') }
         @{ Profile = 'local-llm'; Ids = @('ElementLabs.LMStudio') }
         @{ Profile = 'lab'; Ids = @() }
     ) {

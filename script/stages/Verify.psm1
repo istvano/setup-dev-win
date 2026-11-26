@@ -124,7 +124,8 @@ function Invoke-VerifyChecks {
     $results.Add((Invoke-VerifyCheck -Name 'Apps' -Check {
                 $missing = [System.Collections.Generic.List[string]]::new()
                 foreach ($app in @(Get-AppPackages -Profiles $profiles)) {
-                    if (-not (Test-WingetPackage -Id $app.Id)) { $missing.Add("$($app.Name) ($($app.Id))") }
+                    $source = if ($app.ContainsKey('Source') -and $app.Source) { [string]$app.Source } else { 'winget' }
+                    if (-not (Test-WingetPackage -Id $app.Id -Source $source)) { $missing.Add("$($app.Name) ($($app.Id))") }
                 }
                 $problems = [System.Collections.Generic.List[string]]::new()
                 if ($missing.Count -gt 0) { $problems.Add("missing $($missing -join ', ')") }

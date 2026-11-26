@@ -447,7 +447,7 @@ Eight profiles, in catalogue order: `core`, `dev`, `security`, `productivity`, `
 default set is `core,dev,security,productivity`; `core` is always included. `backup`
 (restic, rclone) is opt-in by operator decision, not part of the default. The default
 set is capped at 40 entries (9 packages today: core 4, dev 2, security 2, productivity 1, plus the font) so the baseline stays reviewable.
-`productivity-extra` holds Chrome, Firefox, Slack, Claude, ChatGPT, OBS Studio, mpv.net,
+`productivity-extra` holds Chrome, Firefox, Slack, Claude, ChatGPT (Store source, ADR-023), OBS Studio, mpv.net,
 Tailscale and OpenVPN. Firefox is the regular `Mozilla.Firefox`, not the Developer
 Edition (operator decision). Hand-installed apps are adopted (ADR-020).
 
@@ -465,3 +465,27 @@ reboot-required still returns 3010 at once). One package that cannot install mus
 block dotfiles, WSL and verify, and `-Stage apps` retries it. Every other stage keeps
 stop-on-failure, because their successors depend on them. The first line shows the
 profiles in use, the default and the available profiles.
+
+## ADR-023: Microsoft Store source for MSIX packages that declare services
+
+Status: accepted, 2026-11-26, from the first W3 run on real hardware.
+
+`OpenAI.ChatGPT` from the winget community source is an MSIX package that declares
+packaged services. Deploying such a package needs administrator rights, and the apps
+stage never elevates (ADR-004), so the install failed with `0x80073d28` ("administrator
+privileges are required"). The same app from the Microsoft Store source,
+`winget install --id 9PLM9XGG6VKS --source msstore`, installed from the same non-elevated
+terminal with no UAC prompt and exit 0: the Store's install service performs the
+deployment.
+
+A catalogue entry may therefore set `Source = 'msstore'`, with the Store product Id
+(12 upper-case letters and digits) as its `Id`. `Test-WingetPackage` and
+`Install-WingetPackage` take `-Source winget|msstore` (default winget), and the apps
+stage and verify pass the entry's source. Only ChatGPT uses it today. The winget
+community source stays the default: it carries the installer hash in its manifest,
+while a Store install is validated by the Store. The drift line reads `winget export
+--source winget` only, so Store apps never appear in it.
+
+The first run also tuned the drift allowlist with what a Windows 11 Home machine ships:
+`Microsoft.365Copilot`, `Microsoft.Outlook`, `Microsoft.Teams`, and `Nvidia.PhysX` from
+the OEM driver bundle.

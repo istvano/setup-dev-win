@@ -57,6 +57,19 @@ Describe 'Invoke-AppsStage' {
         Should-Invoke -ModuleName AppsStage -CommandName Install-WingetPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'B.Two' -and $Scope -eq 'machine' }
     }
 
+    It 'passes a catalogue Source to the check and the install, and winget otherwise' {
+        Mock -ModuleName AppsStage Get-AppPackages {
+            @(
+                @{ Id = 'A.One'; Name = 'One'; Profile = 'core' }
+                @{ Id = '9PLM9XGG6VKS'; Name = 'Store'; Profile = 'core'; Source = 'msstore' }
+            )
+        }
+        Invoke-AppsStage -Context (Get-TestContext) | Out-Null
+        Should-Invoke -ModuleName AppsStage -CommandName Test-WingetPackage -ParameterFilter { $Id -eq '9PLM9XGG6VKS' -and $Source -eq 'msstore' }
+        Should-Invoke -ModuleName AppsStage -CommandName Install-WingetPackage -Times 1 -Exactly -ParameterFilter { $Id -eq '9PLM9XGG6VKS' -and $Source -eq 'msstore' }
+        Should-Invoke -ModuleName AppsStage -CommandName Install-WingetPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'A.One' -and $Source -eq 'winget' }
+    }
+
     It 'reports already-installed as adopted, not failed' {
         Mock -ModuleName AppsStage Install-WingetPackage { 'already-installed' }
         Invoke-AppsStage -Context (Get-TestContext) | Should-Be 'done'

@@ -93,7 +93,7 @@ Things to expect:
 | security | yes | `Bitwarden.Bitwarden`, `Henry++.simplewall` |
 | productivity | yes | `Obsidian.Obsidian` |
 | backup | no | `restic.restic`, `Rclone.Rclone` |
-| productivity-extra | no | `Google.Chrome`, `Mozilla.Firefox`, `SlackTechnologies.Slack`, `Anthropic.Claude`, `OpenAI.ChatGPT`, `OBSProject.OBSStudio`, `mpv.net`, `Tailscale.Tailscale`, `OpenVPNTechnologies.OpenVPN` |
+| productivity-extra | no | `Google.Chrome`, `Mozilla.Firefox`, `SlackTechnologies.Slack`, `Anthropic.Claude`, ChatGPT `9PLM9XGG6VKS` (Microsoft Store source, ADR-023), `OBSProject.OBSStudio`, `mpv.net`, `Tailscale.Tailscale`, `OpenVPNTechnologies.OpenVPN` |
 | local-llm | no | `ElementLabs.LMStudio` |
 | lab | no | none (Hyper-V, Pro only) |
 
@@ -335,26 +335,33 @@ Dotfiles and verify:
 ## W3 acceptance
 
 To run on a machine where Chrome and Firefox were installed by hand. Mark each `[x]`
-with the date when observed on hardware.
+with the date when observed on hardware. First run: 2026-11-26 on the milestone-1
+acceptance machine (Windows 11 Home), profiles
+`core,dev,security,productivity,productivity-extra,local-llm`.
 
-- [ ] A fresh run installs the default profiles (`core,dev,security,productivity`) and
-      `verify` passes the `Apps` check.
+- [x] 2026-11-26: the default profiles and the opt-in extras installed with no elevated
+      run; the only failure was ChatGPT from the winget source (see below).
 - [ ] Chrome and Firefox installed by hand and a run with `productivity-extra` adopts
-      them: no second copy, the stage reports `Adopted` or `already installed`.
-- [ ] Windows Terminal (inbox) is reported already installed.
-- [ ] Declining one installer UAC prompt fails only that app; the stage names it, the
-      run continues through `dotfiles`, `wsl` and `verify` and exits 1, and a re-run of
-      `-Stage apps` installs just that one.
-- [ ] `verify` prints the `apps not in any profile` line and lists real extras.
+      them: no second copy. 2026-11-26: Firefox was reported `already installed`; Chrome
+      was not matched by `winget list` and its installer ran (`Installed Google
+      Chrome`). Check Settings > Apps for a second Chrome entry.
+- [x] 2026-11-26: Windows Terminal (inbox) is reported already installed.
+- [x] 2026-11-26: a failed app fails only that app: the stage named it, the run continued
+      through `dotfiles`, `wsl` and `verify` and exited 1 (seen with ChatGPT rather than a
+      declined UAC prompt). Still to see: a re-run of `-Stage apps` installs just that one.
+- [x] 2026-11-26: `verify` printed `apps not in any profile (4): Microsoft.365Copilot,
+      Microsoft.Outlook, Microsoft.Teams, Nvidia.PhysX`; all four are inbox or OEM and are
+      now in `profiles/drift-allowlist.psd1`.
 - [ ] Close every Windows Terminal window (sign out if it is still missing), then
       `JetBrainsMono Nerd Font Mono` is in Terminal's font list.
 - [ ] An immediate second `pwsh -File script\setup.ps1` run reports every app already
       installed, installs nothing and raises no UAC prompt.
-- [ ] `Anthropic.Claude` and `OpenAI.ChatGPT` (MSIX packages that declare services)
-      install from the non-elevated run; record whether a Store-installed ChatGPT is
-      adopted.
-- [ ] Record the drift line's output on the machine and tune
-      `profiles/drift-allowlist.psd1`.
+- [x] 2026-11-26: `Anthropic.Claude` installed from the non-elevated run.
+      `OpenAI.ChatGPT` from the winget source failed with `0x80073d28` (administrator
+      privileges required: the MSIX declares services); `winget install --id
+      9PLM9XGG6VKS --source msstore` installed it with no UAC prompt and exit 0. The
+      catalogue now uses the Store entry (ADR-023). Still to see: the next run reports
+      ChatGPT `already installed` through `winget list --source msstore`.
 - [ ] A machine with `profiles = core` kept from milestone 1 prints the profiles line and
       the `-Profiles` hint.
 

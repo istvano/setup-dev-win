@@ -189,6 +189,12 @@ Describe 'Invoke-VerifyChecks' {
         (Test-Line 'FAIL Apps: missing Git (Git.Git)*JetBrains Mono Nerd Font is not installed*') | Should-BeTrue
     }
 
+    It 'Apps: checks a Microsoft Store entry against the msstore source' {
+        $null = Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'productivity-extra'))
+        Should-Invoke -CommandName Test-WingetPackage -ModuleName Verify -ParameterFilter { $Id -eq '9PLM9XGG6VKS' -and $Source -eq 'msstore' }
+        Should-Invoke -CommandName Test-WingetPackage -ModuleName Verify -ParameterFilter { $Id -eq 'Git.Git' -and $Source -eq 'winget' }
+    }
+
     It 'Apps: checks only the selected profiles' {
         $null = Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core'))
         Should-NotInvoke -CommandName Test-WingetPackage -ModuleName Verify -ParameterFilter { $Id -eq 'Google.Chrome' }
@@ -226,7 +232,8 @@ Describe 'Invoke-VerifyChecks' {
         $allow = Import-PowerShellDataFile (Join-Path $script:Root 'profiles/drift-allowlist.psd1')
         foreach ($p in 'Microsoft.AppInstaller', 'Microsoft.UI.Xaml.*', 'Microsoft.VCLibs.*', 'Microsoft.VCRedist.*',
             'Microsoft.WindowsAppRuntime.*', 'Microsoft.DotNet.*', 'Microsoft.Edge', 'Microsoft.EdgeWebView2Runtime',
-            'Microsoft.OneDrive', 'Microsoft.WSL', 'Microsoft.DSC') {
+            'Microsoft.OneDrive', 'Microsoft.WSL', 'Microsoft.DSC',
+            'Microsoft.365Copilot', 'Microsoft.Outlook', 'Microsoft.Teams', 'Nvidia.PhysX') {
             $allow.Patterns | Should-ContainCollection $p
         }
     }
