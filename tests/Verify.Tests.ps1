@@ -47,6 +47,10 @@ Describe 'Invoke-VerifyChecks' {
         Mock -ModuleName Verify Get-KernelDmaProtectionState { 'on' }
         $script:Missing = @()
         $script:FontOk = $true
+        $script:VsCli = 'C:\code.cmd'
+        $script:MissingExt = @()
+        Mock -ModuleName Verify Get-VSCodeCli { $script:VsCli }
+        Mock -ModuleName Verify Get-MissingVSCodeExtensions { $script:MissingExt }
         Mock -ModuleName Verify Test-NerdFontInstalled { $script:FontOk }
         Mock -ModuleName Verify Test-WingetPackage { $Id -notin $script:Missing }
         $script:Installed = @('Git.Git')
@@ -222,6 +226,22 @@ Describe 'Invoke-VerifyChecks' {
         $script:Missing = @('Git.Git')
         $null = Invoke-VerifyChecks -Context (New-Ctx)
         (Test-Line 'FAIL Apps: missing Git (Git.Git)*JetBrains Mono Nerd Font is not installed*') | Should-BeTrue
+    }
+
+    It 'Apps: names missing VS Code extensions with dev and VS Code installed' {
+        $script:MissingExt = @('a.one', 'b.two')
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'dev')))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
+        (Test-Line 'FAIL Apps: *VS Code extension a.one*VS Code extension b.two*') | Should-BeTrue
+    }
+
+    It 'Apps: ignores extensions without dev or without VS Code' {
+        $script:MissingExt = @('a.one')
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core')))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeTrue
+        $script:VsCli = $null
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'dev')))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeTrue
     }
 
     It 'Apps: checks a Microsoft Store entry against the msstore source' {

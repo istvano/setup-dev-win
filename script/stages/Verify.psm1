@@ -12,6 +12,7 @@ Import-Module (Join-Path $libRoot 'Distro.psm1') -Force
 Import-Module (Join-Path $libRoot 'Apps.psm1') -Force
 Import-Module (Join-Path $libRoot 'Winget.psm1') -Force
 Import-Module (Join-Path $libRoot 'Font.psm1') -Force
+Import-Module (Join-Path $libRoot 'VSCode.psm1') -Force
 Import-Module (Join-Path $libRoot 'TerminalSettings.psm1') -Force
 # No -Force: share the State instance the runner (or verify.ps1) loaded.
 Import-Module (Join-Path $libRoot 'State.psm1')
@@ -147,6 +148,9 @@ function Invoke-VerifyChecks {
                 $problems = [System.Collections.Generic.List[string]]::new()
                 if ($missing.Count -gt 0) { $problems.Add("missing $($missing -join ', ')") }
                 if ('core' -in $profiles -and -not (Test-NerdFontInstalled)) { $problems.Add('JetBrains Mono Nerd Font is not installed') }
+                if ('dev' -in $profiles -and (Get-VSCodeCli)) {
+                    foreach ($id in @(Get-MissingVSCodeExtensions)) { $problems.Add("VS Code extension $id is not installed") }
+                }
                 if ($problems.Count -gt 0) { "$($problems -join '; '); run pwsh -File script\setup.ps1 -Stage apps." }
             }))
 

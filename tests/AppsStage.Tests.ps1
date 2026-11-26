@@ -9,6 +9,7 @@ BeforeAll {
     Import-Module (Join-Path $root 'script/lib/Apps.psm1') -Force
     Import-Module (Join-Path $root 'script/lib/Winget.psm1') -Force
     Import-Module (Join-Path $root 'script/lib/Font.psm1') -Force
+    Import-Module (Join-Path $root 'script/lib/VSCode.psm1') -Force
     Import-Module (Join-Path $root 'script/stages/AppsStage.psm1') -Force
 
     function Get-TestContext {
@@ -34,6 +35,12 @@ Describe 'Invoke-AppsStage' {
         Mock -ModuleName AppsStage Test-WingetPackage { $false }
         Mock -ModuleName AppsStage Install-WingetPackage { 'installed' }
         Mock -ModuleName AppsStage Install-NerdFont { 'installed' }
+        $script:Cli = 'C:\code.cmd'
+        $script:MissingExt = @('a.one', 'b.two')
+        Mock -ModuleName AppsStage Get-VSCodeCli { $script:Cli }
+        Mock -ModuleName AppsStage Get-MissingVSCodeExtensions { $script:MissingExt }
+        $script:ExtResult = @{ Installed = @('a.one', 'b.two'); Failed = @() }
+        Mock -ModuleName AppsStage Install-VSCodeExtensions { $script:ExtResult }
     }
 
     It 'prints the profiles line first, with the default, the available profiles and how to change them' {
@@ -179,5 +186,66 @@ Describe 'Invoke-AppsStage' {
         Invoke-AppsStage -Context (Get-TestContext) -Plan | Should-Be 'done'
         Should-NotInvoke -ModuleName AppsStage -CommandName Install-NerdFont
         $script:Infos | Should-ContainCollection 'Would install JetBrains Mono Nerd Font'
+    }
+}
+
+
+Describe 'Invoke-AppsStage VS Code extensions' {
+    BeforeEach {
+        $script:Infos = [System.Collections.Generic.List[string]]::new()
+        $script:Oks = [System.Collections.Generic.List[string]]::new()
+        $script:Warns = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName AppsStage Write-Info { $script:Infos.Add($Message) }
+        Mock -ModuleName AppsStage Write-Ok { $script:Oks.Add($Message) }
+        Mock -ModuleName AppsStage Write-Warn { $script:Warns.Add($Message) }
+        Mock -ModuleName AppsStage Get-AppPackages { @() }
+        Mock -ModuleName AppsStage Test-WingetPackage { $true }
+        Mock -ModuleName AppsStage Install-WingetPackage { 'installed' }
+        Mock -ModuleName AppsStage Install-NerdFont { 'installed' }
+        $script:Cli = 'C:\code.cmd'
+        $script:MissingExt = @('a.one', 'b.two')
+        Mock -ModuleName AppsStage Get-VSCodeCli { $script:Cli }
+        Mock -ModuleName AppsStage Get-MissingVSCodeExtensions { $script:MissingExt }
+        $script:ExtResult = @{ Installed = @('a.one', 'b.two'); Failed = @() }
+        Mock -ModuleName AppsStage Install-VSCodeExtensions { $script:ExtResult }
+    }
+
+    It 'does nothing for extensions without the dev profile' {
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('core')) | Should-Be 'done'
+        Should-NotInvoke -ModuleName AppsStage -CommandName Install-VSCodeExtensions
+        Should-NotInvoke -ModuleName AppsStage -CommandName Get-VSCodeCli
+    }
+    It 'skips with a clear line, without failing, when VS Code is absent' {
+        $script:Cli = $null
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('core', 'dev')) | Should-Be 'done'
+        $script:Infos | Should-ContainCollection 'VS Code is not installed; skipping its extensions.'
+        Should-NotInvoke -ModuleName AppsStage -CommandName Install-VSCodeExtensions
+    }
+    It 'installs missing extensions with dev' {
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('core', 'dev')) | Should-Be 'done'
+        Should-Invoke -ModuleName AppsStage -CommandName Install-VSCodeExtensions -Times 1 -Exactly
+        $script:Oks | Should-ContainCollection 'Installed VS Code extension a.one'
+    }
+    It 'reports an already complete set' {
+        $script:MissingExt = @()
+        $script:ExtResult = @{ Installed = @(); Failed = @() }
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('dev')) | Should-Be 'done'
+        $script:Oks | Should-ContainCollection 'VS Code extensions already installed'
+    }
+    It 'lists a failed extension like a package failure' {
+        $script:ExtResult = @{ Installed = @('b.two'); Failed = @('a.one (boom)') }
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('dev')) | Should-Be 'failed'
+        ($script:Warns -join "`n") | Should -Match 'a\.one \(boom\)'
+    }
+    It 'plan prints what would install and installs nothing' {
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('dev')) -Plan | Should-Be 'done'
+        $script:Infos | Should-ContainCollection 'Would install VS Code extension a.one'
+        $script:Infos | Should-ContainCollection 'Would install VS Code extension b.two'
+        Should-NotInvoke -ModuleName AppsStage -CommandName Install-VSCodeExtensions
+    }
+    It 'plan prints the skip line when VS Code is absent' {
+        $script:Cli = $null
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('dev')) -Plan | Should-Be 'done'
+        $script:Infos | Should-ContainCollection 'VS Code is not installed; skipping its extensions.'
     }
 }
