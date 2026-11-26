@@ -530,10 +530,23 @@ chezmoi-managed target that differs (`.wslconfig`, the PowerShell profile) to
 
 The PowerShell profile `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` is a
 chezmoi file. It configures PSReadLine history prediction and defines `dev`, which runs
-`wsl.exe -d dev --cd` in the Linux home directory, passing extra arguments through as a
-command. The home directory is given as `([string][char]126)` because PowerShell 7.5 and
-later expand a bare `~` in a native argument to the Windows profile path (ADR-019). That
-is confirmed by the acceptance item "`dev` from a new pwsh opens in the Linux home".
+`wsl.exe -d dev --cd '~'` in the Linux home directory, passing extra arguments through as
+a command. The `~` is a quoted literal written at the call site because PowerShell 7.5 and
+later expand a tilde in a native argument to the Windows profile path (ADR-019) in every
+other form: bare, `([string][char]126)`, a variable, a splatted element and a
+backtick-escaped `~` all expand; only `'~'` or `"~"` typed directly at the native call
+stays `~`. A probe in the test image showed this matrix; on Windows the expansion would
+start the shell in `/mnt/c/Users/<name>`. `tests/Repo.Tests.ps1` refuses `[char]126` and
+any quoted string starting with `~` other than `wsl.exe --cd '~'`. The behaviour on Windows
+is not yet observed: the acceptance item "`dev` from a new pwsh opens in the Linux home"
+has not run. A `~` the operator passes through `@args` (`dev ls ~`) is expanded to the
+Windows path too, so quote the command as one string (`dev 'ls ~'`) or open the shell with
+`dev` and type there.
+
+A Windows Terminal settings failure (unparseable `settings.json`, sharing violation,
+access denied) is a warning, not a stage failure: `dotfiles` runs on every pass before
+`wsl`, and an unreadable Terminal file must not block installing the distro. The
+`Terminal settings` verify check keeps reporting the problem.
 
 Known loss: Windows Terminal has no middle-click paste (microsoft/terminal#1553, open).
 With `copyOnSelect` off, as the paste warnings assume, right-click paste remains. The

@@ -79,7 +79,12 @@ Things to expect:
   when it is not already, and merges the declared Windows Terminal settings (ADR-024;
   `settings.json.backup.<UTC timestamp>` before a change, nothing written when it is
   already current, a skip when Terminal has never launched). It runs on every setup run,
-  so a declared Terminal setting changed in its UI is restored. Run non-elevated.
+  so a declared Terminal setting changed in its UI is restored. A Terminal settings
+  failure (unparseable `settings.json`, file locked) is a warning, not a stage failure,
+  so `wsl` still runs; `verify` keeps reporting it. On a first install Terminal generates
+  its own `dev` profile only after the `wsl` stage, so the second setup run is the one
+  that hides it; until the distro exists, a new Terminal window opening `dev` shows an
+  error. Run non-elevated.
 - `wsl` reads the newest `Ubuntu-26.04` image URL and SHA256 from Microsoft's
   `DistributionInfo.json` (it stops if that cannot be read), downloads the image to
   `<DistroRoot>\cache`, verifies its SHA256, installs it as `dev` under
@@ -400,7 +405,8 @@ the date when observed on hardware.
 - [ ] Windows Terminal opens `dev` by default, in `JetBrainsMono Nerd Font Mono`, with
       Catppuccin Mocha or Latte following the Windows theme.
 - [ ] `dev` from a new pwsh opens in the Linux home directory (`pwd` prints
-      `/home/<user>`), not under `/mnt/c`.
+      `/home/<user>`), not under `/mnt/c` (the quoted `'~'` of ADR-024).
+- [ ] Terminal's profile dropdown shows exactly one `dev`.
 - [ ] Pasting several lines into Terminal shows the multi-line paste warning.
 - [ ] The operator's own Terminal profiles and other settings survive the run.
 - [ ] A second `pwsh -File script\setup.ps1` run reports Windows Terminal settings up to
@@ -409,7 +415,10 @@ the date when observed on hardware.
       restores 12 and names a backup file.
 - [ ] A new pwsh session has `POWERSHELL_TELEMETRY_OPTOUT=1` and the `dev` function.
 - [ ] `code --list-extensions` shows the four extensions of `vscode/extensions.list`, and
-      `code .` run inside `dev` opens a VS Code window connected to WSL.
+      `code .` run inside `dev`, from a Windows Terminal window opened after the apps
+      stage installed VS Code, opens a VS Code window connected to WSL. This relies on
+      WSL's default `appendWindowsPath`; the Linux repo's planned `~/.local/bin/code`
+      wrapper will replace that.
 - [ ] The VS Code and Zed values under "Manual settings" are set.
 
 ## Running the gate

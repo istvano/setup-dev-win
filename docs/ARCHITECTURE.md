@@ -100,7 +100,9 @@ territory (spec 5.1).
 | Network exposure verify: Linux listeners, Docker binds | linux |
 
 Milestone 1 implements the rows for features, `.wslconfig` and the distro; W3 adds the
-winget apps and the font; the other `win` rows are planned (`TASKS.md`).
+winget apps and the font; W4 adds the Windows Terminal settings, the PowerShell profile
+with the telemetry opt-out, and the Windows-side VS Code extensions; the other `win`
+rows are planned (`TASKS.md`).
 
 ## The gate
 

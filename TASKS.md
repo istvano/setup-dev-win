@@ -1,8 +1,9 @@
 # Tasks
 
 Unfinished work only. Phase names follow the spec (section 9); phase W0 (this
-skeleton and the gate) and phases W1-W2 (milestone 1) the W3 and W4 code are implemented. "Phase Wn" is a
-spec phase, not a decision; decisions are the ADRs in `docs/DECISIONS.md`.
+skeleton and the gate), phases W1-W2 (milestone 1) and the W3 and W4 code are
+implemented. "Phase Wn" is a spec phase, not a decision; decisions are the ADRs in
+`docs/DECISIONS.md`.
 
 - [ ] Milestone 1 acceptance leftovers, checked only in CI so far: the `-DistroRoot`
       hand-over on a machine without `D:`, the elevated-launch refusals and the forced
