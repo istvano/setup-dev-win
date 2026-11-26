@@ -49,7 +49,8 @@ function Get-FeatureState {
     $escaped = $Name.Replace("'", "''")
     $feature = Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='$escaped'" | Select-Object -First 1
     if ($null -eq $feature) { return 'Unknown' }
-    # [verify on real machine, Task 13] InstallState: 1 Enabled, 2 Disabled, 3 Absent.
+    # InstallState: 1 Enabled, 2 Disabled, 3 Absent. 1 seen as a standard user on the
+    # acceptance machine (ADR-019); 2 and 3 are Microsoft's documented values.
     switch ([int]$feature.InstallState) {
         1 { return 'Enabled' }
         2 { return 'Disabled' }

@@ -339,3 +339,45 @@ whose features are still pending.
 
 Superseded by implementation: the spec and plan text that says wsl.exe raises its own
 UAC prompt.
+
+## ADR-019: Milestone 1 accepted on real hardware
+
+Status: accepted, 2026-11-26. Results item by item are in `docs/OPERATIONS.md`,
+"Milestone 1 acceptance".
+
+Machine: Minisforum MS-02 Ultra (Intel Core Ultra 9 285HX, Intel graphics), Windows 11
+Home (`Core`) build 26300, unactivated, with a `D:` drive. From a fresh install,
+`bootstrap.ps1` reached a verified Ubuntu 26.04 `dev` distro with setup-dev-linux-wsl
+applied, and `script\verify.ps1` passed all 6 checks.
+
+Defects the runs found, each fixed before acceptance: winget `0x80070005` on a fresh
+source (stage-0 runs `winget source update` first); "Class not registered" from the
+DISM cmdlets in the MSIX pwsh (ADR-017); `wsl --install` needing elevation and a lost
+restart after a failed run (ADR-018); PowerShell 7.5+ expanding a leading `~` in a
+native argument to the Windows profile, which broke the Linux verify call (it now passes
+`$HOME`, and a repository test refuses string literals that start with `~`); and, on the
+Linux side, the `/mnt` check flagging this repository's own checkout (its ADR-012) and
+the login shell left as bash (documented as an operator step in both repositories).
+
+Facts settled: the MSIX pwsh writes `state.json` to the real `%LOCALAPPDATA%`, not the
+package's `LocalCache`; the Lxss values `DistributionName`, `BasePath`, `Version` and
+`DefaultUid` exist; `wsl --manage <distro> --set-default-user` exists in WSL 3.0.5;
+`passwd -S` puts the status in the second field (`P` once set); `cloud-init status`
+reports `disabled` after install because the user-data file is deleted; systemd runs.
+
+An incident on the first attempt is recorded here because its cause is unknown. After
+`VirtualMachinePlatform` was enabled and the elevated WSL install failed with
+"Catastrophic failure", the first restart hung on a black screen with only the mouse
+pointer; Ctrl+Alt+Del did not respond. The operator restored the system, updated the
+BIOS and reinstalled Windows. On the fresh install the hypervisor runs
+(`VirtualizationBasedSecurityStatus` 2) and every later restart was normal, so the
+hypervisor on this hardware is not the cause in general; an early BIOS combined with the
+half-finished WSL install is the leading suspect. The recovery path (WinRE Command
+Prompt, `bcdedit /set {default} hypervisorlaunchtype off`) is in the operator's
+bring-up notes; a preflight warning before enabling the feature is a possible later
+hardening, not a requirement.
+
+Checked only by CI and unit tests, listed in `TASKS.md` for the next fresh machine:
+the `-DistroRoot` hand-over without `D:`, the elevated-launch refusals, the forced
+elevated-log line, `cloud-init status --wait` exit codes and the non-enabled
+`InstallState` values.

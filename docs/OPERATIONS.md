@@ -214,77 +214,81 @@ cause it printed and re-run `pwsh -File script\setup.ps1 -Stage wsl`.
 
 ## Milestone 1 acceptance
 
-Task 13: the operator's run on the real machine (Windows 11 x64, build 26100 or later),
-after CI is green. It answers what CI and mocks cannot. Record each answer (value, exit
-code, message) next to the item, and update the matching `[verify on real machine]`
-comment in the code where one exists.
+Task 13: the operator's run on the real machine. **Accepted 2026-11-26** on a Minisforum
+MS-02 Ultra (Intel Core Ultra 9 285HX), Windows 11 Home (`Core`) build 26300,
+unactivated, fresh install, with a `D:` drive (default `-DistroRoot D:\WSL`). The full
+bring-up finished with every stage done and `script\verify.ps1` passing all 6 checks
+(exit 0). Results are recorded below and in ADR-019; `[x]` was observed on that
+machine, `[ci]` is covered by CI and the unit tests but was not exercised on hardware.
 
 Stage-0 and elevation:
 
-- [ ] winget source health: `winget source update` succeeds before the install on a
-      fresh machine; if `0x80070005` appears, the printed reset steps fix it.
-- [ ] PowerShell: winget installs the MSIX package (7.7 or later) without a UAC prompt,
-      and after the PATH refresh `pwsh.exe` resolves to the app execution alias
-      `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, which stage-0 hands off to.
-- [ ] Version floor: an installed pwsh 7.6 or later (an existing MSI, for example) is
-      kept with no install.
-- [ ] Elevation under the MSIX pwsh: `[Environment]::ProcessPath` is under
-      `C:\Program Files\WindowsApps\` (record it), and the features stage's elevated
-      pwsh starts from the alias path and runs `Enable-Features.ps1`, which calls `dism.exe /online /enable-feature`
-      (ADR-017); a failure shows dism's exit code in `elevated.log`.
-- [ ] Re-run with the distro `dev` already registered: no manifest fetch and no download
-      (the wsl stage prints no `Distro image:` line), and `<root>\cache` holds only the
-      current `.wsl` after a fresh install.
-- [ ] `-DistroRoot C:\WSL` given to `bootstrap.ps1` reaches `setup.ps1` and is kept in
-      `state.json`; on a machine without `D:` and no flag, preflight names the
-      `-DistroRoot` re-run.
-- [ ] Each UAC prompt and its source, against the table in "UAC prompts".
-- [ ] Stage-0 returns promptly once `setup.ps1` exits (no hang on wslhost or another
-      long-lived child).
-- [ ] An elevated launch of `bootstrap.ps1` and of `script\setup.ps1` is refused with
+- [x] winget source health: the first run failed with `0x80070005` ("Failed to open the
+      predefined source"); `winget source update` first fixed it, and stage-0 now runs
+      it and prints the reset steps on that failure.
+- [x] PowerShell: winget installed the MSIX package 7.7.0 with no UAC prompt;
+      `pwsh` resolves to `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, the package
+      lives in `C:\Program Files\WindowsApps\Microsoft.PowerShell_7.7.0.0_x64__8wekyb3d8bbwe`.
+- [ci] Version floor: an installed pwsh 7.6 or later is kept with no install.
+- [x] Elevation under the MSIX pwsh: the elevated pwsh starts from the alias and runs
+      `Enable-Features.ps1`. The DISM cmdlets failed there with "Class not
+      registered"; `dism.exe` works (ADR-017). `wsl.exe --install --no-distribution`
+      does not elevate itself ("The requested operation requires elevation"), so it
+      moved into the elevated script (ADR-018).
+- [x] Re-run with `dev` registered: no `Distro image:` line, every finished stage
+      skipped.
+- [ci] `-DistroRoot` given to `bootstrap.ps1` reaches `setup.ps1` and is kept. On the
+      acceptance machine the default `D:\WSL` was used and kept in `state.json`.
+- [x] UAC prompts: Git's installer, and one prompt from this repository for the
+      elevated step. The PowerShell MSIX install raised none.
+- [x] Stage-0 returns promptly once `setup.ps1` exits.
+- [ci] An elevated launch of `bootstrap.ps1` and of `script\setup.ps1` is refused with
       `Run from a normal (non-elevated) terminal; elevation is requested per step.`
-- [ ] Record where `state.json` and `elevated.log` actually land under the MSIX pwsh
-      (`%LOCALAPPDATA%\setup-dev-win\` or the `Packages\Microsoft.PowerShell_8wekyb3d8bbwe\LocalCache\Local\setup-dev-win\` copy), with the find command above.
-- [ ] `%LOCALAPPDATA%\setup-dev-win\elevated.log` gets a timestamped `[fail]` line on a
-      forced failure: in an elevated terminal run
-      `pwsh -File script\elevated\Enable-Features.ps1 -Name Bogus` (expect exit 2 and
-      `[fail] Refusing feature 'Bogus'` in the log). Also note whether the features
-      stage prints the new lines after a real failed run.
+- [x] `state.json` lands in the real `%LOCALAPPDATA%\setup-dev-win\` under the MSIX
+      pwsh; the `Packages\Microsoft.PowerShell_8wekyb3d8bbwe\LocalCache` copy stays
+      empty.
+- [x] `elevated.log` gets timestamped `[fail]` lines on a real failure, and the
+      features stage printed them in the normal window (the "Class not registered" and
+      wsl.exe failures). The forced `-Name Bogus` refusal is `[ci]`.
 
 Windows features and WSL:
 
-- [ ] `wsl --version` on the inbox stub (before WSL is installed) returns without
-      waiting for a keypress.
-- [ ] Exit codes of `wsl --install --no-distribution` and `wsl --update`, run elevated by
-      `Enable-Features.ps1 -InstallWsl`, before the reboot (non-elevated, WSL 3.0.5's
-      installer fails: "The requested operation requires elevation", ADR-018).
-- [ ] After a run that enabled a feature but failed later, the re-run returns
-      reboot-required (CBS `RebootPending` present) before the WSL stage.
-- [ ] `Win32_OptionalFeature` `InstallState` read as a standard (non-elevated) user, for
-      a feature that is enabled, one pending a restart and one disabled.
-- [ ] `EditionID` strings for Home and Pro (`Core`, `Professional`).
+- [ci] `wsl --version` on the inbox stub returns without waiting for a keypress (the
+      stage treated the stub as "found: none" and went on).
+- [x] `wsl --install --no-distribution`: exit 1 non-elevated ("requires elevation");
+      elevated, WSL 3.0.5 then also failed with "Catastrophic failure" before the
+      restart owed by enabling `VirtualMachinePlatform`. After a fresh install with a
+      newer BIOS, WSL 3.0.5.0 was present and current. See ADR-019 for the black screen
+      that followed the first restart.
+- [ci] After a run that enabled a feature but failed later, the re-run returns
+      reboot-required (CBS `RebootPending`).
+- [x] `Win32_OptionalFeature` `InstallState` read as a standard user: `1` for an
+      enabled `VirtualMachinePlatform`. Disabled and pending states are `[ci]`.
+- [x] `EditionID` for Home is `Core`. Pro (`Professional`) is `[ci]`.
 
 The dev distro:
 
-- [ ] The image URL resolved from `DistributionInfo.json` is printed, the file lands in
-      `<DistroRoot>\cache` (not `%TEMP%`), and `wsl --install --from-file` reads it.
-- [ ] Lxss registry value names: `DistributionName`, `BasePath`, `Version`, `DefaultUid`.
-- [ ] Registry `DefaultUid` before and after `wsl --manage dev --set-default-user`, and
-      whether that option exists in the installed WSL.
-- [ ] `cloud-init status --wait` exit codes seen (0, 2).
-- [ ] A duplicate `[boot]` section in `/etc/wsl.conf` is harmless (systemd still on).
-- [ ] Whether Ubuntu's out-of-box experience appears on the first interactive
-      `wsl -d dev`.
-- [ ] `passwd -S <user>` output format (status in the second field: `L`, `NP`, `P`).
-- [ ] git is present in the image before the handoff (or the probe installs it).
-- [ ] `wsl -d dev --cd ~ -- bash -c '...' handoff <url> <ref>` passes the rest of the
-      line to the user's shell intact: the handoff quoting holds.
+- [x] The image resolved from `DistributionInfo.json` was downloaded to
+      `<DistroRoot>\cache`, verified and installed with `wsl --install --from-file`.
+- [x] Lxss value names: `DistributionName`, `BasePath` (`D:\WSL\dev`), `Version` (2),
+      `DefaultUid` (1000); also `Flags` (15).
+- [x] `wsl --manage <distro> --set-default-user` exists in WSL 3.0.5; registry
+      `DefaultUid` reads 1000 afterwards.
+- [ci] `cloud-init status --wait` exit codes. After install `cloud-init status` reports
+      `disabled`, expected once the user-data file is deleted.
+- [x] systemd runs in `dev` (`systemctl is-system-running`: `running`).
+- [x] `passwd -S <user>` prints the status in the second field: `<user> P <date> 0
+      99999 7 -1` after the password was set.
+- [x] git is in the image (2.53.0) before the handoff.
+- [x] The handoff quoting holds: the Linux bootstrap ran from `wsl -d dev --cd ~ -- bash
+      -c '...' handoff <url> <ref>` and completed.
 
 Dotfiles and verify:
 
-- [ ] `chezmoi verify` works without `--promptString` after the dotfiles stage's init.
-- [ ] `pwsh -File script\verify.ps1` passes with no flags after setup (it reads the kept
-      choices).
+- [x] `script\verify.ps1` checks `.wslconfig` through chezmoi with the repository's
+      source and passes after setup.
+- [x] `pwsh -File script\verify.ps1` passes with no flags after setup (exit 0, 6 of 6),
+      after the fix for PowerShell's `~` expansion in native arguments (ADR-019).
 
 ## Running the gate
 

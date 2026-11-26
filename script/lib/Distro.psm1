@@ -300,8 +300,8 @@ function Get-RegisteredDistro {
     .SYNOPSIS
         Reads a distro's registration from the Lxss registry key.
     .DESCRIPTION
-        [verify on real machine, Task 13] The key, subkey layout and the value names
-        DistributionName, BasePath, Version and DefaultUid are WSL internals; this is
+        The key, subkey layout and the value names DistributionName, BasePath, Version
+        and DefaultUid are WSL internals, all present on the acceptance machine (ADR-019); this is
         the only place that reads them. BasePath may carry a \\?\ prefix, removed here.
     .OUTPUTS
         $null, or @{ Name; BasePath; Version; DefaultUid }.
@@ -417,7 +417,7 @@ function Install-DevDistro {
 
         # wsl.conf [user] default is not written back to the registry DefaultUid, and
         # .wsl images only update it after OOBE on a first interactive shell.
-        # [verify on real machine, Task 13] that --set-default-user exists for .wsl distros.
+        # --set-default-user exists in WSL 3.0.5 for .wsl distros (ADR-019).
         # wsl.exe reports its own errors (e.g. an unknown option) as exit -1, which
         # Invoke-Native throws on, so any failure here is only a warning: the
         # Assert-DefaultUser below is the real gate.

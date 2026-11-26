@@ -168,7 +168,7 @@ function Invoke-ChezmoiVerify {
         Uses the same --source and --no-tty as Invoke-ChezmoiApply. --promptString is
         an init flag and verify does not take it: the answer was written to the
         chezmoi config by the dotfiles stage's init, which verify reads.
-        [verify on real machine, Task 13]
+        Passes on the acceptance machine (ADR-019).
     .OUTPUTS
         @{ Ok = [bool]; Output = [string[]] }
     #>

@@ -4,12 +4,16 @@ Unfinished work only. Phase names follow the spec (section 9); phase W0 (this
 skeleton and the gate) and phases W1-W2 (milestone 1) are implemented. "Phase Wn" is a
 spec phase, not a decision; decisions are the ADRs in `docs/DECISIONS.md`.
 
-- [ ] Milestone 1 acceptance (Task 13): run the checklist in `docs/OPERATIONS.md`
-      ("Milestone 1 acceptance") on the real machine and record each answer. Done when
-      every item is recorded and each `[verify on real machine]` code comment it
-      settles is updated.
+- [ ] Milestone 1 acceptance leftovers, checked only in CI so far: the `-DistroRoot`
+      hand-over on a machine without `D:`, the elevated-launch refusals and the forced
+      `-Name Bogus` log line on hardware, `cloud-init status --wait` exit codes, and
+      the disabled/pending `InstallState` values. Run them on the next fresh machine.
 - [ ] Phase W3: app profiles (`profiles/*.winget.yaml`), the font manifest, `verify` and
       a drift report. Done when `winget configure test` is clean and drift is reported.
+      Operator decisions (2026-11-26): regular Firefox (`Mozilla.Firefox`), not the
+      Developer Edition; apps already installed by hand (Chrome, Firefox on the test
+      machine) must be adopted, never reinstalled or duplicated, so no `--scope` is
+      forced on browsers; an acceptance item runs W3 on a machine with them present.
 - [ ] Phase W4: Windows-side chezmoi: Terminal (`modify_`), PowerShell profile, VS Code
       and Zed settings. Done when Terminal opens `dev` with the font and posture.
 - [ ] Phase W5: Windows defaults, hardening apply and check, network exposure checks.

@@ -171,7 +171,7 @@ function Get-ElevationHostPath {
     # Internal. The pwsh.exe to elevate: the running one, except when it is the
     # MSIX package under C:\Program Files\WindowsApps, whose files are locked down
     # and not meant to be started by path; then its app execution alias in the
-    # user's WindowsApps directory (W21). [verify on real machine, Task 13]
+    # user's WindowsApps directory (W21). Verified on the acceptance machine (ADR-019).
     [CmdletBinding()]
     [OutputType([string])]
     param()
@@ -200,7 +200,7 @@ function Invoke-ElevatedScript {
         array with bare spaces). The running pwsh is elevated by absolute path, so
         a pwsh planted on PATH is never used; for the MSIX package that path is
         its app execution alias under %LOCALAPPDATA%\Microsoft\WindowsApps, which
-        must exist [verify on real machine, Task 13]. A declined UAC prompt makes
+        must exist (verified on the acceptance machine, ADR-019). A declined UAC prompt makes
         Start-Process throw; the error is not caught here and the caller must
         handle it.
     #>
