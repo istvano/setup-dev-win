@@ -19,9 +19,25 @@ Describe 'Merge-TerminalSettings' {
         $m = Merge-TerminalSettings -Settings @{}
         $m.defaultProfile | Should-Be $script:Guid
         $m.copyOnSelect | Should-BeFalse
-        $m.multiLinePasteWarning | Should-BeTrue
-        $m.largePasteWarning | Should-BeTrue
-        $m.confirmCloseAllTabs | Should-BeTrue
+        # Terminal 1.21+ names (MTSMSettings.h); the legacy names are migrated by
+        # Terminal on load, so writing them would rewrite the file every run.
+        $m['warning.multiLinePaste'] | Should-Be 'automatic'
+        $m['warning.largePaste'] | Should-BeTrue
+        $m['warning.confirmOnClose'] | Should-Be 'automatic'
+    }
+
+    It 'removes the legacy warning keys Terminal would migrate, and writes none of them' {
+        $m = Merge-TerminalSettings -Settings @{ multiLinePasteWarning = $false; largePasteWarning = $false; confirmCloseAllTabs = $false; 'warning.confirmCloseAllTabs' = $false }
+        foreach ($legacy in 'multiLinePasteWarning', 'largePasteWarning', 'confirmCloseAllTabs', 'warning.confirmCloseAllTabs') {
+            $m.ContainsKey($legacy) | Should-BeFalse
+        }
+        $m['warning.multiLinePaste'] | Should-Be 'automatic'
+    }
+
+    It 'a file Terminal already migrated is unchanged by a second merge' {
+        $once = Merge-TerminalSettings -Settings @{}
+        $twice = Merge-TerminalSettings -Settings $once
+        ($twice | ConvertTo-Json -Depth 32 -Compress) | Should-Be ($once | ConvertTo-Json -Depth 32 -Compress)
     }
 
     It 'declares the profile defaults' {
@@ -236,5 +252,19 @@ Describe 'Test-TerminalSettings' {
 
     It 'reports a missing file' {
         Test-TerminalSettings | Should-BeLikeString '*settings.json*'
+    }
+
+    It 'names the multi-line paste warning when Terminal holds another value' {
+        $m = Merge-TerminalSettings -Settings @{}
+        $m['warning.multiLinePaste'] = 'never'
+        $m | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $script:File
+        Test-TerminalSettings | Should-BeLikeString '*warning.multiLinePaste*'
+    }
+
+    It 'accepts true as Terminal''s synonym for automatic' {
+        $m = Merge-TerminalSettings -Settings @{}
+        $m['warning.multiLinePaste'] = $true
+        $m | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $script:File
+        Test-TerminalSettings | Should-Be ''
     }
 }

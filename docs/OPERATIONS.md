@@ -409,7 +409,9 @@ the date when observed on hardware.
 - [ ] `dev` from a new pwsh opens in the Linux home directory (`pwd` prints
       `/home/<user>`), not under `/mnt/c` (the quoted `'~'` of ADR-024).
 - [ ] Terminal's profile dropdown shows exactly one `dev`.
-- [ ] Pasting several lines into Terminal shows the multi-line paste warning.
+- [ ] Pasting several lines into a Command Prompt tab shows the multi-line paste warning
+      (`warning.multiLinePaste` is `automatic`: shells with bracketed paste, such as zsh in
+      `dev`, receive the paste safely without a dialog, as on the Mac).
 - [ ] The operator's own Terminal profiles and other settings survive the run.
 - [ ] A second `pwsh -File script\setup.ps1` run reports Windows Terminal settings up to
       date and leaves no new `settings.json.backup.*` file.
