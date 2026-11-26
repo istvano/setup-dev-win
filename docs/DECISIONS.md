@@ -394,7 +394,7 @@ The apps stage installs the packages of the selected profiles with a plain loop 
 processor, and DSC v3 is the separate `Microsoft.DSC` package: one more dependency to
 install and trust before any app. It runs units declaratively and possibly in parallel
 and leaves the results to be checked afterwards, whereas the loop knows per package
-which outcome happened and prints winget's own error text with the package Id. A loop
+which outcome happened and names the package Id with a clear message per known return code, plus winget's own text for anything else. A loop
 adopts what is already there (below) with a mockable exit-code check. And stage-0 and
 chezmoi already install through the same `winget install` calls, so there is one
 mechanism, not two.
@@ -441,7 +441,7 @@ Eight profiles, in catalogue order: `core`, `dev`, `security`, `productivity`, `
 `productivity-extra`, `local-llm`, `lab` (no packages; Hyper-V only, Pro only). The
 default set is `core,dev,security,productivity`; `core` is always included. `backup`
 (restic, rclone) is opt-in by operator decision, not part of the default. The default
-set is capped at 40 entries (it holds 9 today) so the baseline stays reviewable.
+set is capped at 40 entries (8 packages today, plus the font) so the baseline stays reviewable.
 `productivity-extra` holds Chrome, Firefox, Slack, Claude, ChatGPT, OBS Studio, mpv.net,
 Tailscale and OpenVPN. Firefox is the regular `Mozilla.Firefox`, not the Developer
 Edition (operator decision). Hand-installed apps are adopted (ADR-020).

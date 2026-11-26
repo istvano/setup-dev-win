@@ -35,7 +35,7 @@ the default (ADR-015).
 |---|---|---|
 | preflight | edition, build, data volume, Documents not redirected, virtualization, Kernel DMA state | none |
 | features | enable `VirtualMachinePlatform` (Hyper-V only with `lab` on Pro, refused on Home); state read via CIM | one UAC prompt from this repo (`script/elevated/`); `wsl --install`/`--update` raise their own |
-| apps | install the missing packages of the selected profiles with winget and the per-user Nerd Font (ADR-020, ADR-021, ADR-022); adopts apps already installed; runs on every pass | none from this repository; installers raise their own UAC prompts; refuses to run elevated |
+| apps | install the missing packages of the selected profiles with winget and the per-user Nerd Font (ADR-020, ADR-021, ADR-022); adopts apps already installed; runs on every pass | none from this repository; installers raise their own UAC prompts; never elevates, and the runner refuses an elevated run |
 | dotfiles | latest chezmoi when none is present, apply `.wslconfig`, offer `wsl --shutdown` | refuses to run elevated |
 | wsl | image resolved from Microsoft's manifest, cached in `<root>\cache`, SHA256-verified; install `dev`, default user, password, handoff to the Linux repo | none |
 | verify | read-only checks, always run (see OPERATIONS), including the Apps check and an informational drift line | none |

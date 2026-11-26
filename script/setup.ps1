@@ -11,7 +11,7 @@
     core,dev,security,productivity. Persisted: a later run without -Profiles uses
     the last value given, and a persisted value wins over the default.
 .PARAMETER Stage
-    Run only this stage (preflight, features, dotfiles, wsl, verify).
+    Run only this stage (preflight, features, apps, dotfiles, wsl, verify).
 .PARAMETER Plan
     Show what would change; change and record nothing.
 .PARAMETER LinuxRepoUrl

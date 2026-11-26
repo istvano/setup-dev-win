@@ -48,7 +48,6 @@ prompts on a first run, each from the source named:
 | Git installer | README step 2 (`winget install Git.Git`), before this repository runs |
 | PowerShell 7 | stage-0 installs the latest stable package, which is MSIX: a per-user install that normally raises no prompt (ADR-016) |
 | Enable Windows features and install WSL | this repository: `script/elevated/Enable-Features.ps1`, one prompt for all missing features plus `wsl --install --no-distribution` and `wsl --update` when WSL is missing or too old (ADR-018) |
-
 | App installers that need admin | winget, per package (the apps stage never elevates); a declined prompt fails only that app |
 
 A re-run with everything in place raises none of them.
