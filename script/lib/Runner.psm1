@@ -129,7 +129,7 @@ function Invoke-SetupRun {
     foreach ($name in $stages) {
         if (-not $explicit -and -not $Plan) {
             $prior = Get-StageResult -Stage $name
-            if ($prior -eq 'done' -and $name -notin @('apps', 'verify')) {
+            if ($prior -eq 'done' -and $name -notin @('apps', 'dotfiles', 'verify')) {
                 Write-Info "Stage '$name' already done; skipping."
                 continue
             }

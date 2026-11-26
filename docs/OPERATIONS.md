@@ -149,7 +149,11 @@ default; it never writes. Every failure is shown, not just the first.
 1. Windows build is at least `MinOsBuild`; the edition is reported.
 2. Required features are `Enabled`; Hyper-V is `Disabled` or `Absent` unless `lab`.
 3. WSL version is at least `MinWslVersion`.
-4. `chezmoi verify` reports no drift for `.wslconfig`.
+4. `chezmoi verify` reports no drift for the chezmoi-managed files (`.wslconfig`, the
+   PowerShell profile).
+   `Terminal settings` and `PowerShell telemetry opt-out` follow check 4: Terminal carries the
+   declared settings (a pass with a note before Terminal has ever launched), and
+   `POWERSHELL_TELEMETRY_OPTOUT` is `1` for the user.
 5. Distro `dev` is registered, under the root, WSL 2, and starts as the configured user
    with uid >= 1000.
    The `Apps` check runs after check 5 and before check 6: every package of the selected

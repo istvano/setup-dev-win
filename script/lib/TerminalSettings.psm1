@@ -124,6 +124,17 @@ function Find-ByKey {
     return -1
 }
 
+function Test-TerminalLocalState {
+    <#
+    .SYNOPSIS
+        True when the Windows Terminal LocalState directory exists for this user.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    return [bool](Test-Path -LiteralPath (Split-Path -Parent (Get-TerminalSettingsPath)) -PathType Container)
+}
+
 function Merge-TerminalSettings {
     <#
     .SYNOPSIS
@@ -314,4 +325,4 @@ function Test-TerminalSettings {
     return ''
 }
 
-Export-ModuleMember -Function Merge-TerminalSettings, Update-TerminalSettings, Test-TerminalSettings
+Export-ModuleMember -Function Test-TerminalLocalState, Merge-TerminalSettings, Update-TerminalSettings, Test-TerminalSettings

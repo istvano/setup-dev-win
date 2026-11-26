@@ -24,7 +24,9 @@ Describe 'Repository invariants' {
     }
 
     It 'Every script sets strict mode' {
-        $offenders = foreach ($file in $script:ScriptFiles) {
+        # The chezmoi-managed PowerShell profile is dot-sourced into the operator's interactive
+        # session, where strict mode and Stop would break ad-hoc commands; it is exempt.
+        $offenders = foreach ($file in $script:ScriptFiles | Where-Object { $_.FullName -notlike '*chezmoi*Microsoft.PowerShell_profile.ps1' }) {
             $code = (Get-CodeLine -Path $file.FullName) -join "`n"
             if ($code -notmatch [regex]::Escape('Set-StrictMode -Version Latest') -or
                 $code -notmatch [regex]::Escape('$ErrorActionPreference = ''Stop''')) {

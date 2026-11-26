@@ -131,12 +131,18 @@ Describe 'Invoke-ChezmoiApply' {
         Mock -ModuleName WslConfig Write-Info {}
         Mock -ModuleName WslConfig Get-ChezmoiPath { 'chezmoi' }
         Mock -ModuleName WslConfig Invoke-Native {
-            [pscustomobject]@{ ExitCode = 0; Output = $(if ($ArgumentList[0] -eq 'cat') { @('rendered', 'content') } else { @('applied') }) }
+            $output = switch ($ArgumentList[0]) {
+                'cat' { @('rendered', 'content') }
+                'managed' { @($script:Managed) }
+                default { @('applied') }
+            }
+            [pscustomobject]@{ ExitCode = 0; Output = $output }
         }
         $script:TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("wslcfg-" + [guid]::NewGuid().ToString('N'))
         $null = New-Item -ItemType Directory -Path $script:TmpDir
         $script:Cfg = Join-Path $script:TmpDir '.wslconfig'
         $cfg = $script:Cfg
+        $script:Managed = @($cfg)
         Mock -ModuleName WslConfig Get-WslConfigPath { $cfg }.GetNewClosure()
     }
     AfterEach {
@@ -181,6 +187,52 @@ Describe 'Invoke-ChezmoiApply' {
         Mock -ModuleName WslConfig Get-WslConfigHash { '' }
         $null = Invoke-ChezmoiApply
         @(Get-ChildItem -LiteralPath $script:TmpDir -Force -Filter '.wslconfig.backup.*').Count | Should-Be 0
+    }
+}
+
+Describe 'Invoke-ChezmoiApply generic backup' {
+    BeforeEach {
+        Mock -ModuleName WslConfig Write-Info {}
+        Mock -ModuleName WslConfig Get-ChezmoiPath { 'chezmoi' }
+        Mock -ModuleName WslConfig Get-WslConfigHash { 'SAME' }
+        $script:TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("wslcfg-" + [guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $script:TmpDir
+        $script:Cfg = Join-Path $script:TmpDir '.wslconfig'
+        $script:Prof = Join-Path $script:TmpDir 'Microsoft.PowerShell_profile.ps1'
+        $script:Gone = Join-Path $script:TmpDir 'absent.txt'
+        $script:Managed = @($script:Cfg, $script:Prof, $script:Gone)
+        $script:Calls = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName WslConfig Invoke-Native {
+            $script:Calls.Add(($ArgumentList -join ' '))
+            $output = switch ($ArgumentList[0]) {
+                'cat' { @('wanted', 'content') }
+                'managed' { @($script:Managed) }
+                default { @('applied') }
+            }
+            [pscustomobject]@{ ExitCode = 0; Output = $output }
+        }
+        $cfg = $script:Cfg
+        Mock -ModuleName WslConfig Get-WslConfigPath { $cfg }.GetNewClosure()
+    }
+    AfterEach { Remove-Item -LiteralPath $script:TmpDir -Recurse -Force }
+    It 'asks chezmoi for every managed file as an absolute path, with the same source' {
+        $null = Invoke-ChezmoiApply
+        $managed = @($script:Calls | Where-Object { $_ -like 'managed *' })
+        $managed.Count | Should-Be 1
+        $managed[0] | Should-BeLikeString -Expected '*--include files*--path-style absolute*--source *chezmoi*'
+    }
+    It 'backs up a hand-written PowerShell profile that differs, before chezmoi replaces it' {
+        Set-Content -LiteralPath $script:Prof -Value 'Set-Alias ll Get-ChildItem'
+        $null = Invoke-ChezmoiApply
+        $backups = @(Get-ChildItem -LiteralPath $script:TmpDir -Force -Filter 'Microsoft.PowerShell_profile.ps1.backup.*')
+        $backups.Count | Should-Be 1
+        $backups[0].Name | Should-MatchString '\.backup\.\d{8}T\d{6}Z$'
+        (Get-Content -LiteralPath $backups[0].FullName -Raw).Trim() | Should-Be 'Set-Alias ll Get-ChildItem'
+    }
+    It 'does not back up a managed file that already matches, or one that does not exist' {
+        Set-Content -LiteralPath $script:Prof -Value @('wanted', 'content')
+        $null = Invoke-ChezmoiApply
+        @(Get-ChildItem -LiteralPath $script:TmpDir -Force -Filter '*.backup.*').Count | Should-Be 0
     }
 }
 
@@ -241,6 +293,43 @@ Describe 'Invoke-DotfilesStage' {
         Mock -ModuleName Dotfiles Install-Chezmoi {}
         Mock -ModuleName Dotfiles Invoke-ChezmoiApply { @{ Changed = $true } }
         Mock -ModuleName Dotfiles Request-WslRestart {}
+        $script:Optout = ''
+        $script:Set = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName Dotfiles Get-UserEnvironmentVariable { $script:Optout }
+        Mock -ModuleName Dotfiles Set-UserEnvironmentVariable { $script:Set.Add("$Name=$Value") }
+        $script:TermResult = 'updated'
+        Mock -ModuleName Dotfiles Update-TerminalSettings { $script:TermResult }
+    }
+    It 'sets the telemetry opt-out for the user only when it is not already 1' {
+        Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'
+        $script:Set | Should-BeCollection @('POWERSHELL_TELEMETRY_OPTOUT=1')
+        $script:Set.Clear()
+        $script:Optout = '1'
+        Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'
+        $script:Set.Count | Should-Be 0
+    }
+    It 'reports each Terminal outcome' {
+        foreach ($case in @(@('updated', 'Windows Terminal settings updated.'), @('unchanged', 'Windows Terminal settings are up to date.'))) {
+            $script:TermResult = $case[0]
+            Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'
+            Should-Invoke -ModuleName Dotfiles -CommandName Write-Ok -ParameterFilter { $Message -eq $case[1] }
+        }
+        $script:TermResult = 'skipped'
+        Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'
+        Should-Invoke -ModuleName Dotfiles -CommandName Write-Info -ParameterFilter { $Message -eq 'Windows Terminal is not set up for this user yet; skipped.' }
+    }
+    It 'fails the stage with the reason when Terminal settings cannot be merged' {
+        Mock -ModuleName Dotfiles Update-TerminalSettings { throw 'settings.json is not valid JSON' }
+        Invoke-DotfilesStage -Context $script:ctx | Should-Be 'failed'
+        Should-Invoke -ModuleName Dotfiles -CommandName Write-Warn -ParameterFilter { $Message -like '*settings.json is not valid JSON*' }
+    }
+    It 'plan mode lists the three actions and changes nothing' {
+        Invoke-DotfilesStage -Context $script:ctx -Plan | Should-Be 'done'
+        Should-Invoke -ModuleName Dotfiles -CommandName Write-Info -ParameterFilter { $Message -like '*chezmoi*' }
+        Should-Invoke -ModuleName Dotfiles -CommandName Write-Info -ParameterFilter { $Message -like '*POWERSHELL_TELEMETRY_OPTOUT*' }
+        Should-Invoke -ModuleName Dotfiles -CommandName Write-Info -ParameterFilter { $Message -like '*Windows Terminal*' }
+        Should-NotInvoke -ModuleName Dotfiles -CommandName Set-UserEnvironmentVariable
+        Should-NotInvoke -ModuleName Dotfiles -CommandName Update-TerminalSettings
     }
     It 'installs, applies, requests a restart and returns done' {
         Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'

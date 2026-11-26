@@ -70,7 +70,7 @@ function Get-WslConfigHash {
 function Invoke-ChezmoiApply {
     <#
     .SYNOPSIS
-        Applies the repository's chezmoi source and reports whether .wslconfig changed.
+        Applies the repository's chezmoi source, backing up any managed file it would replace, and reports whether .wslconfig changed.
     .PARAMETER DistroRoot
         WSL distro root, passed to the template's one prompt so a run never asks.
     .OUTPUTS
@@ -90,10 +90,13 @@ function Invoke-ChezmoiApply {
         # promptStringOnce overrides are keyed by the prompt text, not the data key.
         $common += @('--promptString', "WSL distro root=$DistroRoot")
     }
-    $target = Get-WslConfigPath
-    if (Test-Path -LiteralPath $target) {
-        # Write the config (data) without applying, so chezmoi can render the target.
-        $null = Invoke-Native -FilePath $chezmoi -ArgumentList (@('init') + $common)
+    # Write the config (data) without applying, so chezmoi can list and render its targets.
+    $null = Invoke-Native -FilePath $chezmoi -ArgumentList (@('init') + $common)
+    # Every file chezmoi manages (the profile, .wslconfig, ...) is backed up first when it
+    # exists and differs from what chezmoi would write: --force would replace it silently.
+    $managed = Invoke-Native -FilePath $chezmoi -ArgumentList @('managed', '--include', 'files', '--path-style', 'absolute', '--source', $source)
+    foreach ($target in @($managed.Output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })) {
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
         $rendered = Invoke-Native -FilePath $chezmoi -ArgumentList @('cat', '--source', $source, $target)
         $wanted = (($rendered.Output -join "`n") -replace "`r`n", "`n").Trim()
         $existing = ((Get-Content -LiteralPath $target -Raw) -replace "`r`n", "`n").Trim()
@@ -101,7 +104,7 @@ function Invoke-ChezmoiApply {
             $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd\THHmmss\Z')
             $backup = "$target.backup.$stamp"
             Copy-Item -LiteralPath $target -Destination $backup
-            Write-Info "Existing .wslconfig differs; backed up to $backup"
+            Write-Info "Existing $(Split-Path -Leaf $target) differs; backed up to $backup"
         }
     }
     $before = Get-WslConfigHash
