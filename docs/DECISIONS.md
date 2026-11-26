@@ -503,7 +503,12 @@ Replacing the file would destroy that, so the repository declares a small set of
 and merges only those. Every other key, profile, scheme and action survives.
 
 Declared: top level `defaultProfile` (the `dev` profile's GUID), `copyOnSelect` false,
-`multiLinePasteWarning` true, `largePasteWarning` true, `confirmCloseAllTabs` true;
+`warning.multiLinePaste` `automatic`, `warning.largePaste` true, `warning.confirmOnClose`
+`automatic` (the names Windows Terminal 1.21+ reads; the legacy `multiLinePasteWarning`,
+`largePasteWarning` and `confirmCloseAllTabs` are removed, because Terminal migrates them on
+load and rewrites the file, which made the first hardware run fail verify and would have
+rewritten settings.json on every pass; `automatic` warns on a multi-line paste unless the
+shell enabled bracketed paste, as Ghostty's paste protection does on the Mac);
 `profiles.defaults` font `JetBrainsMono Nerd Font Mono` size 12, `colorScheme`
 `Catppuccin Mocha` (dark) and `Catppuccin Latte` (light) so it follows the Windows theme,
 padding `8, 6`; the two schemes themselves, added or replaced by name; and one profile

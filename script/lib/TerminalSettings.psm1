@@ -12,6 +12,7 @@ Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 # a file whose declared values are already present is never rewritten.
 
 $script:ProfileGuid = '{6f9c1a52-3d4e-4b8a-9c17-2e5d8f0b7a31}'
+$script:LegacyWarningKeys = @('multiLinePasteWarning', 'largePasteWarning', 'confirmCloseAllTabs', 'warning.confirmCloseAllTabs')
 $script:DynamicSources = @('Windows.Terminal.Wsl', 'Microsoft.WSL')
 
 # Catppuccin scheme colours are copied verbatim from mocha.json and latte.json of
@@ -156,9 +157,15 @@ function Merge-TerminalSettings {
 
     $merged['defaultProfile'] = $script:ProfileGuid
     $merged['copyOnSelect'] = $false
-    $merged['multiLinePasteWarning'] = $true
-    $merged['largePasteWarning'] = $true
-    $merged['confirmCloseAllTabs'] = $true
+    # Warning keys use the names Terminal 1.21+ reads (src/cascadia/TerminalSettingsModel/
+    # MTSMSettings.h). Terminal migrates the legacy names on load and rewrites the file,
+    # so writing them would make every setup run rewrite settings.json; they are removed.
+    # 'automatic' warns on a multi-line paste unless the shell enabled bracketed paste,
+    # the same rule as Ghostty's clipboard-paste-protection on the Mac (ADR-024).
+    foreach ($legacy in $script:LegacyWarningKeys) { $null = $merged.Remove($legacy) }
+    $merged['warning.multiLinePaste'] = 'automatic'
+    $merged['warning.largePaste'] = $true
+    $merged['warning.confirmOnClose'] = 'automatic'
 
     # profiles: object form, or the legacy array.
     if ($merged.ContainsKey('profiles') -and $merged['profiles'] -is [System.Collections.IList]) {
@@ -289,8 +296,11 @@ function Test-TerminalSettings {
     $s = Read-TerminalSettingsFile -Path $path
     $declared = Merge-TerminalSettings -Settings @{}
 
-    foreach ($key in 'defaultProfile', 'copyOnSelect', 'multiLinePasteWarning', 'largePasteWarning', 'confirmCloseAllTabs') {
-        if (-not $s.ContainsKey($key) -or $s[$key] -ne $declared[$key]) { return "$key is not $($declared[$key])" }
+    foreach ($key in 'defaultProfile', 'copyOnSelect', 'warning.largePaste', 'warning.multiLinePaste', 'warning.confirmOnClose') {
+        $have = if ($s.ContainsKey($key)) { $s[$key] } else { $null }
+        # Terminal accepts true as a synonym for 'automatic' on the multi-line paste warning.
+        if ($key -eq 'warning.multiLinePaste' -and $have -is [bool] -and $have) { $have = 'automatic' }
+        if ($null -eq $have -or "$have" -ne "$($declared[$key])") { return "$key is not $($declared[$key])" }
     }
     $profiles = if ($s.ContainsKey('profiles')) { $s['profiles'] } else { $null }
     if ($profiles -is [System.Collections.IList]) { $profiles = @{ list = $profiles } }
