@@ -23,7 +23,7 @@ Default: `core,dev,security,productivity`.
 | security | yes | Bitwarden, simplewall |
 | productivity | yes | Obsidian |
 | backup | no | restic, rclone |
-| productivity-extra | no | Chrome, Firefox, Slack, Claude, ChatGPT, OBS Studio, mpv.net, Tailscale, OpenVPN |
+| productivity-extra | no | Chrome, Firefox, Slack, Claude, ChatGPT (Microsoft Store), OBS Studio, mpv.net, Tailscale, OpenVPN |
 | local-llm | no | LM Studio |
 | lab | no | none (Hyper-V, Pro only) |
 

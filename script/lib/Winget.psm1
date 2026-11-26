@@ -20,7 +20,7 @@ $script:FailureReasons = @{
     -1978334964 = 'The install was cancelled, usually because the UAC prompt was declined. Re-run the setup and accept the UAC prompt.'
     # 0x800704C7 ERROR_CANCELLED: an exe installer that elevates itself and was declined.
     -2147023673 = 'The install was cancelled, usually because the UAC prompt was declined. Re-run the setup and accept the UAC prompt.'
-    -1978335212 = 'There is no package with this Id in the winget source. Check the Id in profiles\apps.psd1.'
+    -1978335212 = 'There is no package with this Id in its source. Check the Id and Source in profiles\apps.psd1.'
     -1978335215 = 'The installer hash did not match the catalogue, so winget refused it. Nothing was installed; try again later.'
     -1978335174 = 'The install is blocked by a policy on this machine.'
     -1978334961 = 'The install is blocked by a policy on this machine.'
@@ -33,13 +33,19 @@ function Test-WingetPackage {
     .DESCRIPTION
         Uses the exit code only. winget truncates long Ids in its table and
         localises its text, so the printed output is never parsed.
+    .PARAMETER Source
+        winget (the community repository, default) or msstore (Microsoft Store,
+        ADR-023).
     #>
     [CmdletBinding()]
     [OutputType([bool])]
-    param([Parameter(Mandatory)][string]$Id)
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [ValidateSet('winget', 'msstore')][string]$Source = 'winget'
+    )
 
     $arguments = @(
-        'list', '--id', $Id, '--exact', '--source', 'winget',
+        'list', '--id', $Id, '--exact', '--source', $Source,
         '--accept-source-agreements', '--disable-interactivity'
     )
     try {
@@ -60,16 +66,19 @@ function Install-WingetPackage {
         installed" covers an app the operator installed by hand, which winget list
         may not correlate. Any other result throws with the Id, the exit code and a
         plain reason. No --version is passed (ADR-016); --scope only when given.
+        Source msstore installs through the Microsoft Store, which deploys MSIX
+        packages that declare services without this run being elevated (ADR-023).
     #>
     [CmdletBinding()]
     [OutputType([string])]
     param(
         [Parameter(Mandatory)][string]$Id,
-        [string]$Scope
+        [string]$Scope,
+        [ValidateSet('winget', 'msstore')][string]$Source = 'winget'
     )
 
     $arguments = @(
-        'install', '--id', $Id, '--exact', '--source', 'winget', '--silent',
+        'install', '--id', $Id, '--exact', '--source', $Source, '--silent',
         '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'
     )
     if ($Scope) { $arguments += @('--scope', $Scope) }

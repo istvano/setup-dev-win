@@ -48,8 +48,9 @@ function Invoke-AppsStage {
     foreach ($package in $packages) {
         $id = $package.Id
         $name = $package.Name
+        $source = if ($package.ContainsKey('Source') -and $package.Source) { [string]$package.Source } else { 'winget' }
         try {
-            $installed = Test-WingetPackage -Id $id
+            $installed = Test-WingetPackage -Id $id -Source $source
         }
         catch {
             if ($Plan) { Write-Warn "Could not check ${id}: $($_.Exception.Message)" }
@@ -67,7 +68,7 @@ function Invoke-AppsStage {
         }
         Write-Info "Installing $name ($id)... A UAC prompt may appear; check the taskbar if nothing happens."
         try {
-            $install = @{ Id = $id }
+            $install = @{ Id = $id; Source = $source }
             if ($package.ContainsKey('Scope') -and $package.Scope) { $install.Scope = $package.Scope }
             $outcome = Install-WingetPackage @install
         }
@@ -80,7 +81,7 @@ function Invoke-AppsStage {
                 Write-Ok "Installed $name"
                 # Backstop: an installer winget cannot correlate would be reinstalled next run.
                 $listed = $false
-                try { $listed = Test-WingetPackage -Id $id } catch { $listed = $false }
+                try { $listed = Test-WingetPackage -Id $id -Source $source } catch { $listed = $false }
                 if (-not $listed) {
                     Write-Warn "$name ($id) installed but winget does not report it installed; a re-run may reinstall it."
                 }

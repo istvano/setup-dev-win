@@ -13,5 +13,11 @@
         'Microsoft.OneDrive'
         'Microsoft.WSL'
         'Microsoft.DSC'
+        # Inbox on Windows 11 Home (seen on real hardware, 2026-11-26).
+        'Microsoft.365Copilot'
+        'Microsoft.Outlook'
+        'Microsoft.Teams'
+        # Installed with the OEM graphics/driver bundle, not by an operator.
+        'Nvidia.PhysX'
     )
 }

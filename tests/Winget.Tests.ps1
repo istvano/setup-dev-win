@@ -16,6 +16,16 @@ Describe 'Test-WingetPackage' {
             ($ArgumentList -join ' ') -eq 'list --id Git.Git --exact --source winget --accept-source-agreements --disable-interactivity'
         }
     }
+    It 'checks the Microsoft Store source when asked' {
+        Mock -ModuleName Winget Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = [string[]]@() } }
+        Test-WingetPackage -Id '9PLM9XGG6VKS' -Source msstore | Out-Null
+        Should-Invoke -CommandName Invoke-Native -ModuleName Winget -Exactly 1 -ParameterFilter {
+            ($ArgumentList -join ' ') -eq 'list --id 9PLM9XGG6VKS --exact --source msstore --accept-source-agreements --disable-interactivity'
+        }
+    }
+    It 'refuses a source other than winget and msstore' {
+        { Test-WingetPackage -Id 'Git.Git' -Source 'other' } | Should-Throw
+    }
     It 'is true on exit 0 even when the printed table does not contain the Id' {
         Mock -ModuleName Winget Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = [string[]]@('Name  Id', 'Some Long Pack...') } }
         Test-WingetPackage -Id 'Some.LongPackageIdentifier' | Should-BeTrue
@@ -57,6 +67,12 @@ Describe 'Install-WingetPackage' {
             ($ArgumentList -join ' ') -eq 'install --id Git.Git --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity --scope user'
         }
     }
+    It 'installs from the Microsoft Store source when asked' {
+        Install-WingetPackage -Id '9PLM9XGG6VKS' -Source msstore | Out-Null
+        Should-Invoke -CommandName Invoke-Native -ModuleName Winget -Exactly 1 -ParameterFilter {
+            ($ArgumentList -join ' ') -eq 'install --id 9PLM9XGG6VKS --exact --source msstore --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
+        }
+    }
     It 'exit 0 is installed' {
         Install-WingetPackage -Id 'Git.Git' | Should-Be 'installed'
     }
@@ -85,9 +101,9 @@ Describe 'Install-WingetPackage' {
         $script:Code = -2147023673
         { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*-2147023673*cancelled*UAC*'
     }
-    It 'exit -1978335212 on install says no package with this Id is in the winget source' {
+    It 'exit -1978335212 on install says no package with this Id is in its source' {
         $script:Code = -1978335212
-        { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*-1978335212*no package with this Id*winget source*'
+        { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*-1978335212*no package with this Id*source*'
     }
     It 'exit -1978335215 throws mentioning the hash' {
         $script:Code = -1978335215
