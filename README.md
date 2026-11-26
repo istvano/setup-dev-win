@@ -8,7 +8,9 @@ repository `setup-dev-mac`.
 
 **Status:** milestone 1 (bootstrap to a working WSL distro) is implemented: stage-0,
 preflight, features, dotfiles (`.wslconfig`), wsl and verify. Phase W3 adds the apps
-stage (winget profiles and the Nerd Font); its hardware acceptance is open. Windows
+stage (winget profiles and the Nerd Font); phase W4 extends dotfiles with the PowerShell
+profile, Windows Terminal settings and the PowerShell telemetry opt-out, and apps with
+the Windows-side VS Code extensions. Hardware acceptance of W3 and W4 is open. Windows
 defaults and hardening are listed in `TASKS.md`.
 
 ## Profiles

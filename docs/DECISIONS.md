@@ -481,7 +481,10 @@ deployment.
 A catalogue entry may therefore set `Source = 'msstore'`, with the Store product Id
 (12 upper-case letters and digits) as its `Id`. `Test-WingetPackage` and
 `Install-WingetPackage` take `-Source winget|msstore` (default winget), and the apps
-stage and verify pass the entry's source. Only ChatGPT uses it today. The winget
+stage and verify pass the entry's source. Only ChatGPT uses it today. A Store entry also
+sets `WingetId`, the community-source id `winget export` lists the installed app under
+(`OpenAI.ChatGPT`), so the drift line counts it as declared; the second hardware run
+showed that name in the drift line until this was added. The winget
 community source stays the default: it carries the installer hash in its manifest,
 while a Store install is validated by the Store. The drift line reads `winget export
 --source winget` only, so Store apps never appear in it.
@@ -489,3 +492,89 @@ while a Store install is validated by the Store. The drift line reads `winget ex
 The first run also tuned the drift allowlist with what a Windows 11 Home machine ships:
 `Microsoft.365Copilot`, `Microsoft.Outlook`, `Microsoft.Teams`, and `Nvidia.PhysX` from
 the OEM driver bundle.
+
+## ADR-024: Windows Terminal settings merged by the dotfiles stage
+
+Status: accepted, 2026-11-26 (phase W4).
+
+Windows Terminal's `settings.json` is shared with the operator: the Settings UI writes
+it, profiles for other distros and shells appear in it, and the operator adds their own.
+Replacing the file would destroy that, so the repository declares a small set of keys
+and merges only those. Every other key, profile, scheme and action survives.
+
+Declared: top level `defaultProfile` (the `dev` profile's GUID), `copyOnSelect` false,
+`multiLinePasteWarning` true, `largePasteWarning` true, `confirmCloseAllTabs` true;
+`profiles.defaults` font `JetBrainsMono Nerd Font Mono` size 12, `colorScheme`
+`Catppuccin Mocha` (dark) and `Catppuccin Latte` (light) so it follows the Windows theme,
+padding `8, 6`; the two schemes themselves, added or replaced by name; and one profile
+`dev` with the command line `wsl.exe -d dev --cd ~`. The font and the Catppuccin palette
+match the Mac's Ghostty. The scheme colours are copied from catppuccin/windows-terminal at
+commit `4d8bb2f` (recorded in `script/lib/TerminalSettings.psm1`). The dynamic profile
+that Terminal generates for the distro (named `dev`, source `Windows.Terminal.Wsl` or
+`Microsoft.WSL`) is set hidden so there is one `dev` entry, ours.
+
+The merge lives in PowerShell (`Merge-TerminalSettings`, `Update-TerminalSettings`,
+`Test-TerminalSettings`), not in a chezmoi `modify_` script (spec section 6.6). Reasons:
+the merge is a pure function that Pester tests on any platform; chezmoi's target naming
+for a `.ps1` modify script on Windows was not verified and an unrun script would be a
+silent no-op; and the stage can keep the backup rule it already has. Before a changed
+file is written it is copied to `settings.json.backup.<UTC yyyyMMddTHHmmssZ>`; when the
+merge result equals the current content nothing is written and no backup is made. The
+parser accepts the `//` comments the Settings UI writes, and an absent file starts from
+an empty object. Terminal never having launched (no `LocalState` directory) is a skip
+with an info line, and `verify` treats it as a pass with a note.
+
+The dotfiles stage runs on every setup pass (like `apps` and `verify`; the runner's skip
+of a stage recorded `done` exempts all three). A declared key changed in the Settings UI
+is therefore restored on the next run, with the backup naming the previous file; keys
+that are not declared stay as the operator set them. The same stage backs up any
+chezmoi-managed target that differs (`.wslconfig`, the PowerShell profile) to
+`<file>.backup.<timestamp>` before applying.
+
+The PowerShell profile `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` is a
+chezmoi file. It configures PSReadLine history prediction and defines `dev`, which runs
+`wsl.exe -d dev --cd '~'` in the Linux home directory, passing extra arguments through as
+a command. The `~` is a quoted literal written at the call site because PowerShell 7.5 and
+later expand a tilde in a native argument to the Windows profile path (ADR-019) in every
+other form: bare, `([string][char]126)`, a variable, a splatted element and a
+backtick-escaped `~` all expand; only `'~'` or `"~"` typed directly at the native call
+stays `~`. A probe in the test image showed this matrix; on Windows the expansion would
+start the shell in `/mnt/c/Users/<name>`. `tests/Repo.Tests.ps1` refuses `[char]126` and
+any quoted string starting with `~` other than `wsl.exe --cd '~'`. The behaviour on Windows
+is not yet observed: the acceptance item "`dev` from a new pwsh opens in the Linux home"
+has not run. A `~` the operator passes through `@args` (`dev ls ~`) is expanded to the
+Windows path too, so quote the command as one string (`dev 'ls ~'`) or open the shell with
+`dev` and type there.
+
+A Windows Terminal settings failure (unparseable `settings.json`, sharing violation,
+access denied) is a warning, not a stage failure: `dotfiles` runs on every pass before
+`wsl`, and an unreadable Terminal file must not block installing the distro. The
+`Terminal settings` verify check keeps reporting the problem.
+
+Known loss: Windows Terminal has no middle-click paste (microsoft/terminal#1553, open).
+With `copyOnSelect` off, as the paste warnings assume, right-click paste remains. The
+operator accepts this.
+
+## ADR-025: Editor settings are the operator's
+
+Status: accepted, 2026-11-26 (phase W4); operator decision.
+
+As on the Mac (setup-dev-mac `vscode/README.md`: "The scripts do not edit settings.json
+- that file is yours"), this repository never edits the `settings.json` of VS Code or
+Zed. The two settings each editor needs for the posture are listed under "Manual
+settings" in `docs/OPERATIONS.md` for the operator to set once. This replaces spec
+section 6.5's VS Code and Zed settings management.
+
+The repository does own the Windows-side VS Code extensions, in `vscode/extensions.list`
+(one id per line, the UI and remote clients only: Remote - WSL, Remote - SSH, Remote -
+Containers, vscode-icons; language extensions run in WSL and belong to the Linux
+repository). The apps stage installs the missing ones after the font when `dev` is
+selected, through `code.cmd` found on PATH or in the per-user and per-machine install
+locations; absent VS Code is a skip with an info line. Extensions install at the latest
+version (ADR-016) and nothing is ever uninstalled: removing a line only stops installing
+it. The `Apps` verify check names missing extensions.
+
+PowerShell telemetry is switched off with the user environment variable
+`POWERSHELL_TELEMETRY_OPTOUT=1` (HKCU), set by the dotfiles stage only when it is not
+already `1`; `verify` checks it. Other tools' telemetry is the operator's setting, as
+above.

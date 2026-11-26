@@ -25,7 +25,8 @@ With the MSIX PowerShell these files may be virtualised under `%LOCALAPPDATA%\Pa
 Stage-0 checks the OS, runs `winget source update`, installs the latest stable
 PowerShell 7 through winget when no pwsh 7.6 or later is present (ADR-016) and hands off
 to `script\setup.ps1`, which runs `preflight`, `features`, `apps`, `dotfiles`, `wsl`
-and `verify`. `bootstrap.ps1` takes `-Profiles`, `-DistroRoot` and `-LinuxUser` and passes
+and `verify`; `apps`, `dotfiles` and `verify` run on every pass, the others only until
+recorded `done`. `bootstrap.ps1` takes `-Profiles`, `-DistroRoot` and `-LinuxUser` and passes
 each on only when given. `setup.ps1` options: `-Profiles core,dev,lab`, `-DistroRoot D:\WSL`,
 `-LinuxUser <name>`, `-LinuxRef <ref>`, `-Plan` (show what would change, change
 nothing), `-Stage <name>` (run one stage). If preflight reports that the distro drive
@@ -63,16 +64,27 @@ Things to expect:
 - `apps` prints `Profiles: ...` first, then installs what is missing with winget and
   the `JetBrainsMono Nerd Font Mono` font (per user, SHA256-verified, no prompt). It runs on every
   setup run, so a profile added later installs. An app already installed by hand is
-  adopted, never duplicated. One failed package does not stop the other packages: the
+  adopted, never duplicated. With `dev` selected it then installs the Windows-side VS Code
+  extensions in `vscode/extensions.list` that are missing (latest version, never
+  uninstalled; a skip when VS Code is absent). One failed package does not stop the other packages: the
   stage fails naming each Id and reason. A failed `apps` stage does not stop the run
   either: it is recorded failed, `dotfiles`, `wsl` and `verify` still run, and the run
   exits 1 (or 3010 if a later stage needs a restart). Every other stage still stops the
   run on failure. `pwsh -File script\setup.ps1 -Stage apps` retries only what is missing.
   The first line shows the profiles in use, the default and the available profiles.
 - `dotfiles` installs the latest stable chezmoi when none is present and applies
-  `.wslconfig` (sections `[wsl2]`, `[general]`, `[experimental]`). An existing,
-  different `.wslconfig` is backed up to `.wslconfig.backup.<timestamp>` first. Run
-  non-elevated.
+  `.wslconfig` (sections `[wsl2]`, `[general]`, `[experimental]`) and the PowerShell
+  profile. Any existing, different managed file is backed up to
+  `<file>.backup.<timestamp>` first. It sets `POWERSHELL_TELEMETRY_OPTOUT=1` for the user
+  when it is not already, and merges the declared Windows Terminal settings (ADR-024;
+  `settings.json.backup.<UTC timestamp>` before a change, nothing written when it is
+  already current, a skip when Terminal has never launched). It runs on every setup run,
+  so a declared Terminal setting changed in its UI is restored. A Terminal settings
+  failure (unparseable `settings.json`, file locked) is a warning, not a stage failure,
+  so `wsl` still runs; `verify` keeps reporting it. On a first install Terminal generates
+  its own `dev` profile only after the `wsl` stage, so the second setup run is the one
+  that hides it; until the distro exists, a new Terminal window opening `dev` shows an
+  error. Run non-elevated.
 - `wsl` reads the newest `Ubuntu-26.04` image URL and SHA256 from Microsoft's
   `DistributionInfo.json` (it stops if that cannot be read), downloads the image to
   `<DistroRoot>\cache`, verifies its SHA256, installs it as `dev` under
@@ -149,12 +161,17 @@ default; it never writes. Every failure is shown, not just the first.
 1. Windows build is at least `MinOsBuild`; the edition is reported.
 2. Required features are `Enabled`; Hyper-V is `Disabled` or `Absent` unless `lab`.
 3. WSL version is at least `MinWslVersion`.
-4. `chezmoi verify` reports no drift for `.wslconfig`.
+4. `chezmoi verify` reports no drift for the chezmoi-managed files (`.wslconfig`, the
+   PowerShell profile).
+   `Terminal settings` and `PowerShell telemetry opt-out` follow check 4: Terminal carries the
+   declared settings (a pass with a note before Terminal has ever launched), and
+   `POWERSHELL_TELEMETRY_OPTOUT` is `1` for the user.
 5. Distro `dev` is registered, under the root, WSL 2, and starts as the configured user
    with uid >= 1000.
    The `Apps` check runs after check 5 and before check 6: every package of the selected
    profiles is installed, and the font when `core` is selected; a failure names what is
-   missing and the retry command (`pwsh -File script\setup.ps1 -Stage apps`).
+   missing, including VS Code extensions from `vscode/extensions.list`, and the retry
+   command (`pwsh -File script\setup.ps1 -Stage apps`).
 6. `~/workspace/setup-dev-linux-wsl/script/verify` exits 0 inside `dev` (its output is
    shown). If it says chezmoi is not initialised, the Linux bootstrap never completed:
    re-run `pwsh -File script\setup.ps1 -Stage wsl`.
@@ -341,10 +358,10 @@ acceptance machine (Windows 11 Home), profiles
 
 - [x] 2026-11-26: the default profiles and the opt-in extras installed with no elevated
       run; the only failure was ChatGPT from the winget source (see below).
-- [ ] Chrome and Firefox installed by hand and a run with `productivity-extra` adopts
-      them: no second copy. 2026-11-26: Firefox was reported `already installed`; Chrome
-      was not matched by `winget list` and its installer ran (`Installed Google
-      Chrome`). Check Settings > Apps for a second Chrome entry.
+- [x] 2026-11-26: Chrome and Firefox installed by hand end up as one copy each. Firefox
+      was reported `already installed`; Chrome was not matched by `winget list`, so its
+      installer ran (`Installed Google Chrome`) and updated the existing copy in place:
+      Settings > Apps shows a single Chrome.
 - [x] 2026-11-26: Windows Terminal (inbox) is reported already installed.
 - [x] 2026-11-26: a failed app fails only that app: the stage named it, the run continued
       through `dotfiles`, `wsl` and `verify` and exited 1 (seen with ChatGPT rather than a
@@ -354,16 +371,57 @@ acceptance machine (Windows 11 Home), profiles
       now in `profiles/drift-allowlist.psd1`.
 - [ ] Close every Windows Terminal window (sign out if it is still missing), then
       `JetBrainsMono Nerd Font Mono` is in Terminal's font list.
-- [ ] An immediate second `pwsh -File script\setup.ps1` run reports every app already
-      installed, installs nothing and raises no UAC prompt.
+- [x] 2026-11-26: a second `pwsh -File script\setup.ps1` run reported all 19 apps and the
+      font already installed, installed nothing, raised no UAC prompt, passed `OK Apps`
+      and exited 0. Its drift line showed `OpenAI.ChatGPT`, the Store ChatGPT under its
+      winget-source name; the catalogue's `WingetId` now covers it.
 - [x] 2026-11-26: `Anthropic.Claude` installed from the non-elevated run.
       `OpenAI.ChatGPT` from the winget source failed with `0x80073d28` (administrator
       privileges required: the MSIX declares services); `winget install --id
       9PLM9XGG6VKS --source msstore` installed it with no UAC prompt and exit 0. The
-      catalogue now uses the Store entry (ADR-023). Still to see: the next run reports
-      ChatGPT `already installed` through `winget list --source msstore`.
+      catalogue now uses the Store entry (ADR-023). The next run reported ChatGPT
+      `already installed` through `winget list --source msstore`.
 - [ ] A machine with `profiles = core` kept from milestone 1 prints the profiles line and
       the `-Profiles` hint.
+
+## Manual settings
+
+The repository never edits the `settings.json` of VS Code or Zed (ADR-025). Set these
+once; they are not verified.
+
+VS Code (Command Palette, "Preferences: Open User Settings (JSON)"):
+
+- `"telemetry.telemetryLevel": "off"`
+- `"update.mode": "manual"` (winget updates it)
+
+Zed (`zed: open settings`, the `settings.json` it opens):
+
+- `"auto_update": false` (winget updates it)
+- `"telemetry": { "diagnostics": false, "metrics": false }`
+
+## W4 acceptance
+
+To run after a full setup pass on a machine with `core,dev` selected. Mark each `[x]` with
+the date when observed on hardware.
+
+- [ ] Windows Terminal opens `dev` by default, in `JetBrainsMono Nerd Font Mono`, with
+      Catppuccin Mocha or Latte following the Windows theme.
+- [ ] `dev` from a new pwsh opens in the Linux home directory (`pwd` prints
+      `/home/<user>`), not under `/mnt/c` (the quoted `'~'` of ADR-024).
+- [ ] Terminal's profile dropdown shows exactly one `dev`.
+- [ ] Pasting several lines into Terminal shows the multi-line paste warning.
+- [ ] The operator's own Terminal profiles and other settings survive the run.
+- [ ] A second `pwsh -File script\setup.ps1` run reports Windows Terminal settings up to
+      date and leaves no new `settings.json.backup.*` file.
+- [ ] Changing the font size in the Terminal Settings UI, then running setup again,
+      restores 12 and names a backup file.
+- [ ] A new pwsh session has `POWERSHELL_TELEMETRY_OPTOUT=1` and the `dev` function.
+- [ ] `code --list-extensions` shows the four extensions of `vscode/extensions.list`, and
+      `code .` run inside `dev`, from a Windows Terminal window opened after the apps
+      stage installed VS Code, opens a VS Code window connected to WSL. This relies on
+      WSL's default `appendWindowsPath`; the Linux repo's planned `~/.local/bin/code`
+      wrapper will replace that.
+- [ ] The VS Code and Zed values under "Manual settings" are set.
 
 ## Running the gate
 

@@ -28,6 +28,12 @@ Describe 'Invoke-VerifyChecks' {
         Mock -ModuleName Verify Get-WslVersion { [version]$script:Pins.MinWslVersion }
         $script:Chezmoi = @{ Ok = $true; Output = @() }
         Mock -ModuleName Verify Invoke-ChezmoiVerify { $script:Chezmoi }
+        $script:TermLocalState = $true
+        $script:TermReason = ''
+        Mock -ModuleName Verify Test-TerminalLocalState { $script:TermLocalState }
+        Mock -ModuleName Verify Test-TerminalSettings { $script:TermReason }
+        $script:Optout = '1'
+        Mock -ModuleName Verify Get-UserEnvironmentVariable { $script:Optout }
         $script:Distro = @{ Name = 'dev'; BasePath = 'D:\WSL\dev'; Version = 2; DefaultUid = 0 }
         Mock -ModuleName Verify Get-RegisteredDistro { $script:Distro }
         Mock -ModuleName Verify Get-LinuxUserName { 'alice' }
@@ -41,6 +47,10 @@ Describe 'Invoke-VerifyChecks' {
         Mock -ModuleName Verify Get-KernelDmaProtectionState { 'on' }
         $script:Missing = @()
         $script:FontOk = $true
+        $script:VsCli = 'C:\code.cmd'
+        $script:MissingExt = @()
+        Mock -ModuleName Verify Get-VSCodeCli { $script:VsCli }
+        Mock -ModuleName Verify Get-MissingVSCodeExtensions { $script:MissingExt }
         Mock -ModuleName Verify Test-NerdFontInstalled { $script:FontOk }
         Mock -ModuleName Verify Test-WingetPackage { $Id -notin $script:Missing }
         $script:Installed = @('Git.Git')
@@ -53,9 +63,9 @@ Describe 'Invoke-VerifyChecks' {
 
     It 'passes every check on a healthy machine' {
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
-        $r.Count | Should-Be 7
+        $r.Count | Should-Be 9
         @($r | Where-Object { -not $_.Ok }).Count | Should-Be 0
-        ($script:Lines | Where-Object { $_ -like 'OK *' }).Count | Should-Be 7
+        ($script:Lines | Where-Object { $_ -like 'OK *' }).Count | Should-Be 9
         (Test-Line 'OK Apps') | Should-BeTrue
         (Test-Line '*linux verify line*') | Should-BeTrue
     }
@@ -121,6 +131,35 @@ Describe 'Invoke-VerifyChecks' {
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
         ($r | Where-Object Name -Like '*chezmoi*').Ok | Should-BeFalse
         (Test-Line 'FAIL *chezmoi*.wslconfig differs*') | Should-BeTrue
+    }
+
+    It 'the chezmoi check is named for the dotfiles, not just .wslconfig' {
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        ($r | Where-Object Name -EQ 'chezmoi verify (dotfiles)').Ok | Should-BeTrue
+        ($r | Where-Object Name -Like '*(.wslconfig)*') | Should-BeNull
+    }
+
+    It 'Terminal settings: fails with the reason from Test-TerminalSettings' {
+        $script:TermReason = 'copyOnSelect is False'
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        ($r | Where-Object Name -EQ 'Terminal settings').Ok | Should-BeFalse
+        (Test-Line 'FAIL Terminal settings: copyOnSelect is False') | Should-BeTrue
+    }
+
+    It 'Terminal settings: passes with a note when Terminal has no LocalState yet' {
+        $script:TermLocalState = $false
+        $script:TermReason = 'settings.json not found'
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        ($r | Where-Object Name -EQ 'Terminal settings').Ok | Should-BeTrue
+        (Test-Line '*Terminal*not set up*') | Should-BeTrue
+        Should-NotInvoke -CommandName Test-TerminalSettings -ModuleName Verify
+    }
+
+    It 'PowerShell telemetry opt-out: fails unless the user variable is 1' {
+        $script:Optout = ''
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        ($r | Where-Object Name -EQ 'PowerShell telemetry opt-out').Ok | Should-BeFalse
+        (Test-Line 'FAIL PowerShell telemetry opt-out: POWERSHELL_TELEMETRY_OPTOUT is not 1 for this user; run pwsh -File script\setup.ps1 -Stage dotfiles.') | Should-BeTrue
     }
 
     It 'check 5: fails when dev is not registered, and check 6 fails too' {
@@ -189,6 +228,31 @@ Describe 'Invoke-VerifyChecks' {
         (Test-Line 'FAIL Apps: missing Git (Git.Git)*JetBrains Mono Nerd Font is not installed*') | Should-BeTrue
     }
 
+    It 'Apps: names missing VS Code extensions with dev and VS Code installed' {
+        $script:MissingExt = @('a.one', 'b.two')
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'dev')))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
+        (Test-Line 'FAIL Apps: *VS Code extension a.one*VS Code extension b.two*') | Should-BeTrue
+    }
+
+    It 'Apps: a failing extension listing keeps the package and font problems and names the reason' {
+        $script:Missing = @('Git.Git')
+        $script:FontOk = $false
+        Mock -ModuleName Verify Get-MissingVSCodeExtensions { throw 'code exited 1' }
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'dev')))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
+        (Test-Line 'FAIL Apps: missing Git*JetBrains Mono Nerd Font is not installed*could not list VS Code extensions: code exited 1*') | Should-BeTrue
+    }
+
+    It 'Apps: ignores extensions without dev or without VS Code' {
+        $script:MissingExt = @('a.one')
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core')))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeTrue
+        $script:VsCli = $null
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'dev')))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeTrue
+    }
+
     It 'Apps: checks a Microsoft Store entry against the msstore source' {
         $null = Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'productivity-extra'))
         Should-Invoke -CommandName Test-WingetPackage -ModuleName Verify -ParameterFilter { $Id -eq '9PLM9XGG6VKS' -and $Source -eq 'msstore' }
@@ -205,7 +269,7 @@ Describe 'Invoke-VerifyChecks' {
         Mock -ModuleName Verify Test-WingetPackage { throw "winget list failed for $Id" }
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
         ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
-        $r.Count | Should-Be 7
+        $r.Count | Should-Be 9
     }
 
     It 'drift: lists installed ids in no profile, minus the allowlist, case-insensitively' {
@@ -213,6 +277,12 @@ Describe 'Invoke-VerifyChecks' {
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
         @($r | Where-Object { -not $_.Ok }).Count | Should-Be 0
         (Test-Line 'INFO apps not in any profile (2): Foo.Bar, Zed.Other') | Should-BeTrue
+    }
+
+    It 'drift: a Store entry''s winget-source name (WingetId) counts as declared' {
+        $script:Installed = @('Git.Git', 'OpenAI.ChatGPT')
+        $null = Invoke-VerifyChecks -Context (New-Ctx)
+        (Test-Line 'INFO apps not in any profile: none') | Should-BeTrue
     }
 
     It 'drift: none when everything is declared or allowlisted' {
@@ -253,7 +323,7 @@ Describe 'Invoke-VerifyChecks' {
         $script:Chezmoi = @{ Ok = $false; Output = @('x') }
         $script:LinuxExit = 1
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
-        $r.Count | Should-Be 7
+        $r.Count | Should-Be 9
         @($r | Where-Object { -not $_.Ok }).Count | Should-Be 3
     }
 }

@@ -106,10 +106,11 @@ Describe 'Invoke-SetupRun' {
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-DotfilesStage
     }
 
-    It 'a second complete run invokes only apps and verify' {
+    It 'a second complete run invokes only apps, dotfiles and verify' {
         Invoke-SetupRun | Should-Be 0
         Invoke-SetupRun | Should-Be 0
         Should-Invoke -ModuleName Runner -CommandName Invoke-AppsStage -Times 2 -Exactly
+        Should-Invoke -ModuleName Runner -CommandName Invoke-DotfilesStage -Times 2 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-PreflightStage -Times 1 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-WslStage -Times 1 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 2 -Exactly
@@ -119,6 +120,12 @@ Describe 'Invoke-SetupRun' {
         Set-StageResult -Stage 'apps' -Result 'done'
         Invoke-SetupRun | Should-Be 0
         Should-Invoke -ModuleName Runner -CommandName Invoke-AppsStage -Times 1 -Exactly
+    }
+
+    It 'dotfiles runs on every pass even when recorded done, so a changed Terminal setting is restored' {
+        Set-StageResult -Stage 'dotfiles' -Result 'done'
+        Invoke-SetupRun | Should-Be 0
+        Should-Invoke -ModuleName Runner -CommandName Invoke-DotfilesStage -Times 1 -Exactly
     }
 
     It '-Stage apps runs only apps' {

@@ -35,12 +35,13 @@ the default (ADR-015).
 |---|---|---|
 | preflight | edition, build, data volume, Documents not redirected, virtualization, Kernel DMA state | none |
 | features | enable `VirtualMachinePlatform` (Hyper-V only with `lab` on Pro, refused on Home); state read via CIM | one UAC prompt from this repo (`script/elevated/`); `wsl --install`/`--update` raise their own |
-| apps | install the missing packages of the selected profiles with winget and the per-user Nerd Font (ADR-020, ADR-021, ADR-022); adopts apps already installed; runs on every pass | none from this repository; installers raise their own UAC prompts; never elevates, and the runner refuses an elevated run |
-| dotfiles | latest chezmoi when none is present, apply `.wslconfig`, offer `wsl --shutdown` | refuses to run elevated |
+| apps | install the missing packages of the selected profiles with winget, the per-user Nerd Font and the Windows-side VS Code extensions of `vscode/extensions.list` (ADR-020, ADR-021, ADR-022, ADR-025); adopts apps already installed; runs on every pass | none from this repository; installers raise their own UAC prompts; never elevates, and the runner refuses an elevated run |
+| dotfiles | latest chezmoi when none is present, apply `.wslconfig` and the PowerShell profile (a differing file is backed up first), offer `wsl --shutdown`, set `POWERSHELL_TELEMETRY_OPTOUT=1`, merge the declared Windows Terminal settings (ADR-024); runs on every pass | refuses to run elevated |
 | wsl | image resolved from Microsoft's manifest, cached in `<root>\cache`, SHA256-verified; install `dev`, default user, password, handoff to the Linux repo | none |
 | verify | read-only checks, always run (see OPERATIONS), including the Apps check and an informational drift line | none |
 
-Stage order is `preflight, features, apps, dotfiles, wsl, verify`. A failed stage stops the
+Stage order is `preflight, features, apps, dotfiles, wsl, verify`; `apps`, `dotfiles` and
+`verify` run on every pass. A failed stage stops the
 run, except `apps`: it is recorded failed and the run continues, ending with exit 1
 (ADR-022). The catalogue is
 `profiles/apps.psd1` (read by `script/lib/Apps.psm1`); winget calls go through
@@ -85,12 +86,12 @@ territory (spec 5.1).
 
 | Item | Owner |
 |---|---|
-| winget apps, fonts, Windows Terminal, PowerShell profile, Windows settings, Defender/ASR, UAC, privacy policy, firewall (Windows + Hyper-V firewall checks), simplewall | win |
+| winget apps, fonts, Windows Terminal settings (declared keys merged, ADR-024), PowerShell profile, Windows settings, Defender/ASR, UAC, privacy policy, firewall (Windows + Hyper-V firewall checks), simplewall | win |
 | Windows optional features, WSL install/update, Hyper-V | win |
 | `%UserProfile%\.wslconfig` | win |
 | Downloading, verifying and installing the distro; cloud-init user-data; distro name and location | win |
 | `C:\Program Files\ClaudeCode\managed-settings.json` (Windows-side policy for WSL to inherit) | win |
-| VS Code user settings (host side) and the `remote-wsl` extension | win |
+| Windows-side VS Code extensions (`vscode/extensions.list`); VS Code and Zed `settings.json` are the operator's (ADR-025) | win |
 | Everything inside the distro: apt, Homebrew, mise, dotfiles, Docker, CUDA, agents | linux |
 | `/etc/wsl.conf` | linux (WSL target only) |
 | `/etc/claude-code/managed-settings.json`, `/etc/codex/requirements.toml` | linux |
@@ -99,7 +100,9 @@ territory (spec 5.1).
 | Network exposure verify: Linux listeners, Docker binds | linux |
 
 Milestone 1 implements the rows for features, `.wslconfig` and the distro; W3 adds the
-winget apps and the font; the other `win` rows are planned (`TASKS.md`).
+winget apps and the font; W4 adds the Windows Terminal settings, the PowerShell profile
+with the telemetry opt-out, and the Windows-side VS Code extensions; the other `win`
+rows are planned (`TASKS.md`).
 
 ## The gate
 

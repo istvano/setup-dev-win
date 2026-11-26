@@ -7,6 +7,7 @@ Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Common.psm1') -
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Apps.psm1') -Force
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Winget.psm1') -Force
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Font.psm1') -Force
+Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/VSCode.psm1') -Force
 
 function Invoke-AppsStage {
     <#
@@ -107,6 +108,31 @@ function Invoke-AppsStage {
                 }
             }
             catch { $failures.Add("$fontName ($($_.Exception.Message))") }
+        }
+    }
+
+    # Windows-side VS Code extensions follow the font and belong to dev.
+    if ('dev' -in $profiles) {
+        if (-not (Get-VSCodeCli)) {
+            Write-Info 'VS Code is not installed; skipping its extensions.'
+        }
+        elseif ($Plan) {
+            try {
+                foreach ($id in @(Get-MissingVSCodeExtensions)) { Write-Info "Would install VS Code extension $id" }
+            }
+            catch {
+                Write-Warn "Could not check VS Code extensions: $($_.Exception.Message)"
+                $failures.Add("VS Code extensions ($($_.Exception.Message))")
+            }
+        }
+        else {
+            try {
+                $extensions = Install-VSCodeExtensions
+                foreach ($id in @($extensions.Installed)) { Write-Ok "Installed VS Code extension $id" }
+                foreach ($entry in @($extensions.Failed)) { $failures.Add($entry) }
+                if (@($extensions.Installed).Count -eq 0 -and @($extensions.Failed).Count -eq 0) { Write-Ok 'VS Code extensions already installed' }
+            }
+            catch { $failures.Add("VS Code extensions ($($_.Exception.Message))") }
         }
     }
 

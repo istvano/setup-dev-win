@@ -218,5 +218,28 @@ function Invoke-ElevatedScript {
     return [int]$process.ExitCode
 }
 
+function Get-UserEnvironmentVariable {
+    # Mockable. A user-scope (HKCU) environment variable; empty string when unset.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Name)
+    $value = [Environment]::GetEnvironmentVariable($Name, 'User')
+    if ($null -eq $value) { return '' }
+    return [string]$value
+}
+
+function Set-UserEnvironmentVariable {
+    # Mockable. Writes a user-scope (HKCU) environment variable; never machine scope.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'A thin mockable wrapper; callers decide whether to write.')]
+    [CmdletBinding()]
+    [OutputType([void])]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Value
+    )
+    [Environment]::SetEnvironmentVariable($Name, $Value, 'User')
+}
+
 Export-ModuleMember -Function Write-Info, Write-Ok, Write-Warn, Stop-Fatal, Get-RepoRoot,
-Test-IsElevated, Invoke-Native, Invoke-ElevatedScript
+Test-IsElevated, Invoke-Native, Invoke-ElevatedScript,
+Get-UserEnvironmentVariable, Set-UserEnvironmentVariable

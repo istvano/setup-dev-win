@@ -1,18 +1,22 @@
 # Tasks
 
 Unfinished work only. Phase names follow the spec (section 9); phase W0 (this
-skeleton and the gate) and phases W1-W2 (milestone 1) and the W3 code are implemented. "Phase Wn" is a
-spec phase, not a decision; decisions are the ADRs in `docs/DECISIONS.md`.
+skeleton and the gate), phases W1-W2 (milestone 1) and the W3 and W4 code are
+implemented. "Phase Wn" is a spec phase, not a decision; decisions are the ADRs in
+`docs/DECISIONS.md`.
 
 - [ ] Milestone 1 acceptance leftovers, checked only in CI so far: the `-DistroRoot`
       hand-over on a machine without `D:`, the elevated-launch refusals and the forced
       `-Name Bogus` log line on hardware, `cloud-init status --wait` exit codes, and
       the disabled/pending `InstallState` values. Run them on the next fresh machine.
-- [ ] Phase W3 acceptance: the code, ADR-020 to ADR-022 and the runbook are done; run
-      the "W3 acceptance" checklist in `docs/OPERATIONS.md` on a machine that already
-      has Chrome and Firefox installed by hand.
-- [ ] Phase W4: Windows-side chezmoi: Terminal (`modify_`), PowerShell profile, VS Code
-      and Zed settings. Done when Terminal opens `dev` with the font and posture.
+- [ ] Phase W3 acceptance leftovers (the run of 2026-11-26 passed: every app installed
+      or adopted, a second run installed nothing and exited 0): confirm
+      `JetBrainsMono Nerd Font Mono` in Windows Terminal's font list after closing every
+      Terminal window, see a re-run of `-Stage apps` retry only a failed app, and see the
+      profiles hint on a machine that kept `profiles = core` without `-Profiles`.
+- [ ] Phase W4 acceptance: the code, ADR-024, ADR-025 and the runbook are done; run the
+      "W4 acceptance" checklist in `docs/OPERATIONS.md` on hardware, then set the values
+      under "Manual settings". Done when Terminal opens `dev` with the font and posture.
 - [ ] Phase W5: Windows defaults, hardening apply and check, network exposure checks.
       Done when `hardening-check -Strict` passes.
 - [ ] Phase W6: Hyper-V test harness and lab VM (Pro). Done when the full bootstrap

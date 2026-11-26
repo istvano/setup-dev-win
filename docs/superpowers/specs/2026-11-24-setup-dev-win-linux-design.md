@@ -5,6 +5,7 @@
 >
 > | Stale statement in this document | What was implemented | Decision |
 > |---|---|---|
+> | Section 6.6: Windows Terminal settings through a chezmoi `modify_` script; section 6.5: VS Code and Zed settings managed | A PowerShell merge of declared keys run by the dotfiles stage on every pass; VS Code and Zed `settings.json` stay the operator's, only the extension list is owned | ADR-024, ADR-025 |
 > | Section 6.5: WinGet Configuration, `winget configure test`, exact versions, `securityContext: elevated`, a local font manifest; backup in the default profiles | A winget install loop with latest stable packages and installers' own UAC prompts; the font installed per user from the upstream release; default profiles `core,dev,security,productivity` (backup opt-in) | ADR-020, ADR-021, ADR-022 |
 > | Edition read with `Get-WindowsEdition -Online` | `EditionID` registry value (DISM cmdlet needs elevation) | ADR-008 |
 > | Feature state from `Get-WindowsOptionalFeature`; `Enable-Features.ps1 -CheckOnly`; re-read after enabling | `Win32_OptionalFeature` through CIM, non-elevated; the elevated script only enables; its exit code is the result | ADR-010 |

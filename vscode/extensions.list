@@ -1,0 +1,8 @@
+# Windows-side VS Code extensions: UI and remote clients only.
+# Language extensions run inside WSL and belong to the Linux repository.
+# One id per line; the trailing comment says why. Latest versions are installed
+# (ADR-016). Nothing is ever uninstalled: removing a line stops installing it.
+ms-vscode-remote.remote-wsl # open folders inside the dev WSL distro
+ms-vscode-remote.remote-ssh # edit on remote hosts over SSH
+ms-vscode-remote.remote-containers # attach to containers
+vscode-icons-team.vscode-icons # file icons in the explorer

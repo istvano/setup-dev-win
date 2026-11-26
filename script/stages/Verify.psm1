@@ -12,6 +12,8 @@ Import-Module (Join-Path $libRoot 'Distro.psm1') -Force
 Import-Module (Join-Path $libRoot 'Apps.psm1') -Force
 Import-Module (Join-Path $libRoot 'Winget.psm1') -Force
 Import-Module (Join-Path $libRoot 'Font.psm1') -Force
+Import-Module (Join-Path $libRoot 'VSCode.psm1') -Force
+Import-Module (Join-Path $libRoot 'TerminalSettings.psm1') -Force
 # No -Force: share the State instance the runner (or verify.ps1) loaded.
 Import-Module (Join-Path $libRoot 'State.psm1')
 
@@ -46,7 +48,7 @@ function Invoke-VerifyCheck {
 function Invoke-VerifyChecks {
     <#
     .SYNOPSIS
-        Runs the verification checks (OS, features, WSL, .wslconfig, distro, apps) and returns one result per check.
+        Runs the verification checks (OS, features, WSL, dotfiles, Terminal, distro, apps) and returns one result per check.
     .DESCRIPTION
         Shared by the verify stage and script/verify.ps1. Each check prints
         "OK <name>" or "FAIL <name>: <reason>"; a failure never stops the later
@@ -103,10 +105,26 @@ function Invoke-VerifyChecks {
                 if ($version -lt [version]$pins.MinWslVersion) { "WSL $version is below the minimum $($pins.MinWslVersion); run wsl --update." }
             }))
 
-    # 4. .wslconfig has no drift against the chezmoi source.
-    $results.Add((Invoke-VerifyCheck -Name 'chezmoi verify (.wslconfig)' -Check {
+    # 4. The chezmoi-managed files (.wslconfig, the PowerShell profile) have no drift against the chezmoi source.
+    $results.Add((Invoke-VerifyCheck -Name 'chezmoi verify (dotfiles)' -Check {
                 $verify = Invoke-ChezmoiVerify
                 if (-not $verify.Ok) { "chezmoi reports drift or an error: $((@($verify.Output) | Select-Object -First 5) -join '; ')" }
+            }))
+
+    # 4b. Windows Terminal carries the declared settings (skipped, with a note, before it is ever launched).
+    $results.Add((Invoke-VerifyCheck -Name 'Terminal settings' -Check {
+                if (-not (Test-TerminalLocalState)) {
+                    Write-Host '     Windows Terminal is not set up for this user yet; nothing to check.'
+                    return ''
+                }
+                Test-TerminalSettings
+            }))
+
+    # 4c. PowerShell telemetry stays off for this user.
+    $results.Add((Invoke-VerifyCheck -Name 'PowerShell telemetry opt-out' -Check {
+                if ((Get-UserEnvironmentVariable -Name 'POWERSHELL_TELEMETRY_OPTOUT') -ne '1') {
+                    'POWERSHELL_TELEMETRY_OPTOUT is not 1 for this user; run pwsh -File script\setup.ps1 -Stage dotfiles.'
+                }
             }))
 
     # 5. dev is registered, under the root, WSL 2, and starts as the right user.
@@ -130,6 +148,12 @@ function Invoke-VerifyChecks {
                 $problems = [System.Collections.Generic.List[string]]::new()
                 if ($missing.Count -gt 0) { $problems.Add("missing $($missing -join ', ')") }
                 if ('core' -in $profiles -and -not (Test-NerdFontInstalled)) { $problems.Add('JetBrains Mono Nerd Font is not installed') }
+                if ('dev' -in $profiles -and (Get-VSCodeCli)) {
+                    try {
+                        foreach ($id in @(Get-MissingVSCodeExtensions)) { $problems.Add("VS Code extension $id is not installed") }
+                    }
+                    catch { $problems.Add("could not list VS Code extensions: $($_.Exception.Message)") }
+                }
                 if ($problems.Count -gt 0) { "$($problems -join '; '); run pwsh -File script\setup.ps1 -Stage apps." }
             }))
 
@@ -160,7 +184,11 @@ function Invoke-VerifyChecks {
     # and not Windows/winget infrastructure. Informational; nothing is uninstalled.
     try {
         $catalog = Get-AppCatalog
-        $declared = @($catalog.Profiles.Values | ForEach-Object { $_ } | ForEach-Object { [string]$_.Id })
+        # A Store entry's WingetId is the name winget export lists it under (ADR-023).
+        $declared = @($catalog.Profiles.Values | ForEach-Object { $_ } | ForEach-Object {
+                [string]$_.Id
+                if ($_.ContainsKey('WingetId') -and $_.WingetId) { [string]$_.WingetId }
+            })
         $allowPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'profiles/drift-allowlist.psd1'
         $patterns = @((Import-PowerShellDataFile -LiteralPath $allowPath).Patterns)
         $extra = @(Get-WingetInstalledIds | Where-Object {
@@ -193,7 +221,7 @@ function Invoke-VerifyStage {
         [switch]$Plan
     )
     if ($Plan) {
-        Write-Info 'Would check: OS build, features, WSL version, chezmoi drift, installed apps, the dev distro, the Linux verify (read-only).'
+        Write-Info 'Would check: OS build, features, WSL version, chezmoi drift, Terminal settings, PowerShell telemetry opt-out, installed apps, the dev distro, the Linux verify (read-only).'
         return 'done'
     }
     $results = @(Invoke-VerifyChecks -Context $Context)
