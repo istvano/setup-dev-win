@@ -5,8 +5,8 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 
-# Windows-side VS Code extensions (UI and remote clients; language extensions run
-# inside WSL and belong to the Linux repository). Latest stable is installed with
+# Windows-side VS Code extensions (UI and remote clients; WSL-side extensions are
+# the operator's and no repository manages them, ADR-025). Latest stable is installed with
 # no version (ADR-016). Nothing is ever uninstalled: removing a line from
 # vscode/extensions.list only stops installing it. VS Code's settings.json is
 # never touched. Everything runs as the operator; nothing elevates.

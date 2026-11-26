@@ -572,8 +572,9 @@ section 6.5's VS Code and Zed settings management.
 
 The repository does own the Windows-side VS Code extensions, in `vscode/extensions.list`
 (one id per line, the UI and remote clients only: Remote - WSL, Remote - SSH, Remote -
-Containers, vscode-icons; language extensions run in WSL and belong to the Linux
-repository). The apps stage installs the missing ones after the font when `dev` is
+Containers, vscode-icons). WSL-side (workspace) extensions are not managed by any
+repository: the operator installs them as needed (the Linux repository decided the same,
+setup-dev-linux-wsl ADR-014). The apps stage installs the missing ones after the font when `dev` is
 selected, through `code.cmd` found on PATH or in the per-user and per-machine install
 locations; absent VS Code is a skip with an info line. Extensions install at the latest
 version (ADR-016) and nothing is ever uninstalled: removing a line only stops installing
@@ -634,3 +635,21 @@ What a later apply phase would need, none of which exists:
 - Memory integrity stays check-only. The black-screen restart recorded in ADR-019 had an
   unknown cause involving the hypervisor, and a scripted change there could lock the
   operator out.
+
+## ADR-027: Isolated browser profiles
+
+Status: accepted, 2026-11-26; operator decision (parity with setup-dev-mac ADR-014).
+
+Signing two contexts into one browser profile merges history, extensions and passwords,
+so the Mac keeps `personal` and `work` in separate data roots. This repository does the
+same with `script/browser-profile.ps1` (logic in `script/lib/BrowserProfiles.psm1`):
+roots under `%LOCALAPPDATA%\setup-dev-win\browsers\<browser>\<name>`, Chrome started
+with `--user-data-dir` and Firefox with `-no-remote -profile`. Names are lowercase
+letters, digits, dots, underscores and hyphens (starting with a letter or digit);
+`ensure-defaults` creates `personal` and `work`, `add NAME` creates another. A path that
+is a link or reparse point is refused. The script never elevates, never reads or writes a
+browser's default profile and signs in nowhere; it is not run by `setup.ps1`, as the Mac
+does not run it from its install either. The Mac creates no application launchers, only
+the command, so no Start-menu shortcuts are created here. Firefox is the release build
+the catalogue installs (`Mozilla.Firefox`), not the Developer Edition the Mac uses.
+Whether to sync in a profile is the operator's choice (OPERATIONS, "Browser profiles").

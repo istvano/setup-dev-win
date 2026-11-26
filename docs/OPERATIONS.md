@@ -399,6 +399,92 @@ Zed (`zed: open settings`, the `settings.json` it opens):
 - `"auto_update": false` (winget updates it)
 - `"telemetry": { "diagnostics": false, "metrics": false }`
 
+The applications below are also set by hand and not verified by the repository. Names
+come from the Mac's `docs/MANUAL-SECURITY.md` and the spec; where a name could not be
+checked against the vendor's current documentation the line says "verify".
+
+### Claude desktop app
+
+`Anthropic.Claude`, `productivity-extra`.
+
+- Its MCP servers and connectors are not governed by this repository. Open Settings,
+  review the connectors and extensions, and leave them off unless you turn one on
+  deliberately: each is code with tool access to this machine, running as you.
+- Telemetry has no documented opt-out for the desktop app. Check Settings > Privacy once
+  and turn off any option to use your conversations to improve the model (verify the
+  current name); record what you find.
+
+### ChatGPT desktop app
+
+`9PLM9XGG6VKS` (Microsoft Store), `productivity-extra`.
+
+- Settings > Data Controls: turn off "Improve the model for everyone" (verify the
+  current name). It is an account setting and syncs to every device, so confirm it once
+  rather than assume it.
+- Keep any feature that reads other applications' content (the Mac's "Work with Apps")
+  off, and do not connect a terminal as a context source: terminal scrollback holds
+  secrets.
+- Developer Mode connectors are not governed from here; treat them like MCP servers.
+
+### Tailscale
+
+`Tailscale.Tailscale`, `productivity-extra`; host only, WSL reaches the tailnet through it.
+
+- Opt out of Tailscale's support logging: put `TS_NO_LOGS_NO_SUPPORT=true` on a line in
+  `%ProgramData%\Tailscale\tailscaled-env.txt` (create the file if absent), then restart
+  the Tailscale service (verify against Tailscale's environment-variable documentation).
+- `tailscale set --auto-update=false` (winget updates it).
+
+### OpenVPN
+
+`OpenVPNTechnologies.OpenVPN`, `productivity-extra`.
+
+- Set `OpenVPNService` (display name "OpenVPN Service") to Manual in `services.msc`, so no
+  VPN runs until you start it (verify the service name on the installed version). Leave
+  `OpenVPNServiceInteractive` ("OpenVPN Interactive Service") as installed: it is what lets
+  the OpenVPN GUI connect without administrator rights, and Manual can stop a non-admin
+  connection working. Limiting MSI components is not available through winget; skip.
+
+### Firefox
+
+`Mozilla.Firefox`, `productivity-extra`.
+
+- Settings > Privacy & Security: turn off "Allow Firefox to send technical and
+  interaction data to Mozilla" and the data-collection and crash-report options.
+- A `policies.json` is the stronger option, applied by hand: create
+  `distribution\policies.json` next to `firefox.exe` with `{ "policies": {
+  "DisableTelemetry": true, "DisableAppUpdate": true } }` (verify the keys against
+  Mozilla's policy templates). Writing under Program Files needs an administrator, which
+  is why the repository does not do it. It applies to every profile of that install,
+  including the isolated `personal` and `work` ones. `DisableAppUpdate` suits a
+  winget-managed copy. A Firefox update may replace the folder, so re-check it afterwards.
+- Isolated `personal` and `work` profiles: see "Browser profiles" below. Decide
+  deliberately about sync; signing both into one account merges them.
+
+### Bitwarden
+
+`Bitwarden.Bitwarden`, `security`.
+
+- Set a vault timeout with an action of Lock or Log out, enable two-step login on the
+  account, and check the desktop options for requiring a password or biometric unlock on restart
+  (verify the current setting name). Store the account recovery code offline, not on this machine.
+
+### simplewall
+
+`Henry++.simplewall`, `security`.
+
+- It starts with no filtering. Open it, enable filtering, and allow-list the programs you
+  use (Windows Terminal, browsers, the WSL network, Tailscale). It is useful only after a
+  few days of answering prompts. It is the one outbound firewall here (the Mac's LuLu
+  role); do not run another beside it.
+
+### Hardware security keys
+
+- A FIDO2 key (YubiKey or equivalent) as a second factor on the accounts that matter:
+  the forge, the cloud providers, Bitwarden. Register two keys everywhere; one key is a
+  single point of failure. No key tooling is installed by any profile. Enrolment needs
+  physical possession, so nothing is automated.
+
 ## W4 acceptance
 
 To run after a full setup pass on a machine with `core,dev` selected. Mark each `[x]` with
@@ -497,3 +583,22 @@ the versions in `tests/tool-versions.psd1` inside the container only. CI on
 ## Line endings
 
 `.gitattributes` is `* text=auto eol=lf`. A file that needs CRLF is declared per file.
+
+## Browser profiles
+
+`script\browser-profile.ps1` keeps Chrome and Firefox contexts in separate data roots
+under `%LOCALAPPDATA%\setup-dev-win\browsers\<browser>\<name>` (ADR-027). It never touches a
+browser's default profile and never elevates.
+
+```powershell
+pwsh -File script\browser-profile.ps1 ensure-defaults   # personal and work
+pwsh -File script\browser-profile.ps1 add cloud-admin
+pwsh -File script\browser-profile.ps1 list
+pwsh -File script\browser-profile.ps1 open chrome work
+pwsh -File script\browser-profile.ps1 open firefox work
+```
+
+Names are lowercase letters, digits, dots, underscores and hyphens, starting with a letter
+or digit. `open` creates the profile if needed, then starts the browser on it (Chrome with
+`--user-data-dir`, Firefox with `-no-remote -profile`) and fails when the browser is not
+installed (select `productivity-extra`). Creating the roots does not sign in anywhere.
