@@ -28,6 +28,11 @@ all good). Expect a few UAC prompts on the first run (Git, enabling Windows feat
 the WSL installer); installing PowerShell 7 (the MSIX package) normally raises none.
 See `docs/OPERATIONS.md`.
 
+**When the run finishes, two steps inside `wsl -d dev` are yours:** make zsh your login
+shell with `chsh -s /usr/bin/zsh` (until then WSL opens in bash without the installed
+tools), and enrol the printed SSH key at GitHub as both an authentication and a signing
+key. See "After the first successful run" in `docs/OPERATIONS.md`.
+
 ## Principles
 
 - Windows host only; everything engineering lives in WSL (ADR-001).

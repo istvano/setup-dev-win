@@ -71,6 +71,21 @@ Things to expect:
   reused on a rebuild; delete `<DistroRoot>\cache` to free the space.
 - `verify` always runs last and prints `OK <check>` or `FAIL <check>: <reason>`.
 
+### After the first successful run: two steps inside WSL
+
+Neither repository changes your login shell or uploads a key, so finish these once,
+inside `wsl -d dev`:
+
+1. **Make zsh your login shell:** `chsh -s /usr/bin/zsh` (it asks for your Linux
+   password). Ubuntu starts you in bash, which the Linux repository does not
+   configure: until you switch, `wsl -d dev` opens without Homebrew on `PATH` and
+   `chezmoi`, `mise` and the rest are "command not found". Do not install the snap
+   Ubuntu suggests; type `zsh` for the current session. For fish, use the lines the
+   Linux bootstrap printed.
+2. **Enrol the SSH key** it printed (`cat ~/.ssh/id_ed25519.pub`) at
+   https://github.com/settings/ssh/new twice: once as an Authentication Key, once as a
+   Signing Key.
+
 ## After a reboot
 
 When a run ends with `Reboot, then run pwsh -File script\setup.ps1 again ...` (exit
