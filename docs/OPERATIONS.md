@@ -423,6 +423,65 @@ the date when observed on hardware.
       wrapper will replace that.
 - [ ] The VS Code and Zed values under "Manual settings" are set.
 
+## Posture report
+
+`pwsh -File script\hardening-check.ps1 [-Strict]` reads the machine's security and
+privacy settings and prints one line per check, then a summary (ADR-026):
+
+```text
+<STATUS> <group>: <title> = <value>
+     -> <recommendation>          (RECOMMEND lines only)
+Summary: <n> OK, <n> RECOMMEND, <n> INFO, <n> UNKNOWN
+```
+
+It is read-only: it writes no setting (winget may refresh its own source cache and writes
+a temporary export file that it deletes), never elevates and never prompts. Exit code is 0;
+with `-Strict` it is 1 when any check is `RECOMMEND`. `UNKNOWN` never fails. Nothing is
+applied: you make each change yourself, in the place the recommendation names.
+
+| Status | Meaning |
+|---|---|
+| `OK` | The value is the recommended one. |
+| `RECOMMEND` | The value differs; the next line says what to change and where. |
+| `INFO` | Reported for your decision (Smart App Control, attack surface reduction rule count, Copilot apps, simplewall, the admin account, VBS and Kernel DMA when not on, a diagnostic-data or activity-history value that is not set). |
+| `UNKNOWN (<reason>)` | The value could not be read: the cmdlet is missing, the value is absent or hidden by tamper protection, or it needs an elevated terminal. Never a finding. |
+
+Groups and checks: Platform (Secure Boot, TPM, Memory integrity (HVCI), Virtualization-based
+security, LSA protection, Kernel DMA protection, Smart App Control, Device encryption);
+Defender (Running mode, Real-time protection, Behavior monitoring, Tamper protection, Cloud
+protection, Attack surface reduction rules); UAC (UAC on, Secure desktop prompt); Firewall
+(Domain, Private and Public profile, WSL Hyper-V firewall inbound); Network (Port proxy,
+WSL/Docker listeners); Legacy (SMBv1, PowerShell 2.0 engine, Remote Assistance, AutoPlay);
+Privacy (Advertising ID, Tailored experiences, Diagnostic data, Activity history); Apps
+(Copilot apps, simplewall filtering); Account (Daily account is an administrator).
+
+Device encryption (and any row that says so) needs an elevated terminal and prints
+`UNKNOWN (needs an elevated terminal)` from a normal one. Run it from a normal terminal,
+then from an administrator terminal, and read the second run for those rows. Elevating is
+your act; the script never does it.
+
+Memory integrity and the other platform settings are check-only on purpose: a firmware or
+hypervisor change can leave the machine unbootable (ADR-019), so the recommendation names
+the Settings page and nothing changes by itself.
+
+### Posture report acceptance
+
+Not yet run on hardware. Mark each `[x]` with the date when observed.
+
+- [ ] Run `pwsh -File script\hardening-check.ps1` from a normal terminal on the test
+      machine and record the full output (with machine-identifying values removed).
+- [ ] Run it again from an administrator terminal and record the output; the Device
+      encryption row and the Defender rows that said `needs an elevated terminal` now
+      show a value.
+- [ ] `Account: Daily account is an administrator` says `yes` for the administrator
+      account.
+- [ ] `-Strict` exits 1 while any row is `RECOMMEND` and 0 when none is; `UNKNOWN` alone
+      does not fail it (`$LASTEXITCODE`).
+- [ ] With LM Studio running and serving, confirm the process name it shows in Task
+      Manager or `Get-Process`; if it is not `LM Studio`, correct `$script:ListenerProcesses`
+      in `script/lib/PostureChecks.psm1`.
+- [ ] Nothing changed: no new registry value or firewall rule after either run.
+
 ## Running the gate
 
 ```powershell
