@@ -20,14 +20,20 @@ function Test-BrowserProfileName {
         True when the name is a valid profile name.
     .DESCRIPTION
         Lowercase letters, digits, dots, underscores and hyphens, starting with a letter or
-        digit. The pattern is case-sensitive on purpose.
+        digit and not ending in a dot. Windows reserved device names (con, prn, aux, nul,
+        com1-9, lpt1-9) are refused. The pattern is case-sensitive on purpose.
     .PARAMETER Name
         The candidate profile name.
     #>
     [CmdletBinding()]
     [OutputType([bool])]
     param([AllowEmptyString()][string]$Name)
-    return [bool]($Name -cmatch '^[a-z0-9][a-z0-9._-]*$')
+    # \z, not $: in .NET $ also matches before a trailing newline.
+    if ($Name -cnotmatch '^[a-z0-9][a-z0-9._-]*\z') { return $false }
+    if ($Name.EndsWith('.')) { return $false }
+    # Windows device names, with or without an extension, cannot be directory names.
+    if ($Name -match '^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$') { return $false }
+    return $true
 }
 
 function Get-BrowserProfileRoot {
@@ -73,6 +79,25 @@ function Get-BrowserProfilePath {
     Join-Path (Join-Path (Get-BrowserProfileRoot) $Browser) $Name
 }
 
+function Get-BrowserPathAncestor {
+    # Internal. The path and every ancestor up to, not including, LOCALAPPDATA. When the
+    # path is not under LOCALAPPDATA, up to and including the browsers root only.
+    [OutputType([string[]])]
+    param([Parameter(Mandatory)][string]$Path)
+    $stop = if ($env:LOCALAPPDATA) { [System.IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\', '/') } else { '' }
+    $separators = [char[]]@('\', '/')
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd($separators)
+    $under = $stop -and $full.StartsWith($stop + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+    $floor = if ($under) { $stop } else { [System.IO.Path]::GetFullPath((Split-Path -Parent (Get-BrowserProfileRoot))).TrimEnd($separators) }
+    $found = [System.Collections.Generic.List[string]]::new()
+    $current = $full
+    while ($current -and $current.Length -gt $floor.Length -and $current -ne $floor) {
+        $found.Add($current)
+        $current = Split-Path -Parent $current
+    }
+    return [string[]]$found
+}
+
 function Initialize-BrowserProfile {
     <#
     .SYNOPSIS
@@ -89,8 +114,7 @@ function Initialize-BrowserProfile {
     Assert-BrowserName -Name $Name
     foreach ($browser in $script:Browsers) {
         $path = Get-BrowserProfilePath -Browser $browser -Name $Name
-        $parent = Split-Path -Parent $path
-        foreach ($candidate in @($parent, $path)) {
+        foreach ($candidate in @(Get-BrowserPathAncestor -Path $path)) {
             $item = Get-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
             if ($item -and $item.LinkType) { throw "Refusing a linked browser profile path: $candidate" }
         }
@@ -118,15 +142,9 @@ function Get-BrowserProfile {
     return @($rows)
 }
 
-function Get-BrowserExecutable {
-    <#
-    .SYNOPSIS
-        The path of chrome.exe or firefox.exe, or $null when the browser is not installed.
-    .PARAMETER Browser
-        chrome or firefox.
-    #>
-    [CmdletBinding()]
-    [OutputType([string])]
+function Get-BrowserSearchPath {
+    # Internal. Where a browser's executable is looked for, in order.
+    [OutputType([string[]])]
     param([Parameter(Mandatory)][string]$Browser)
     $candidates = switch ($Browser) {
         'chrome' {
@@ -141,6 +159,20 @@ function Get-BrowserExecutable {
         }
         default { throw "Unknown browser: $Browser (chrome or firefox)." }
     }
+    return [string[]]@($candidates)
+}
+
+function Get-BrowserExecutable {
+    <#
+    .SYNOPSIS
+        The path of chrome.exe or firefox.exe, or $null when the browser is not installed.
+    .PARAMETER Browser
+        chrome or firefox.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Browser)
+    $candidates = Get-BrowserSearchPath -Browser $Browser
     foreach ($candidate in @($candidates)) {
         if (Test-BrowserFile -Path $candidate) { return $candidate }
     }
@@ -165,10 +197,13 @@ function Open-BrowserProfile {
         [Parameter(Mandatory)][string]$Browser,
         [Parameter(Mandatory)][string]$Name
     )
+    if (-not $Browser) { throw 'A browser is required (chrome or firefox).' }
     Assert-BrowserName -Browser $Browser -Name $Name
-    if ($Browser -cnotin $script:Browsers) { throw "Unknown browser: $Browser (chrome or firefox)." }
     $exe = Get-BrowserExecutable -Browser $Browser
-    if (-not $exe) { throw "$Browser is not installed; select the productivity-extra profile." }
+    if (-not $exe) {
+        $looked = (Get-BrowserSearchPath -Browser $Browser) -join '; '
+        throw "$Browser is not installed (looked in: $looked); select the productivity-extra profile."
+    }
     Initialize-BrowserProfile -Name $Name
     $path = Get-BrowserProfilePath -Browser $Browser -Name $Name
     # Start-Process joins an array with bare spaces, so each token carries its own quotes.
@@ -181,12 +216,27 @@ function Open-BrowserProfile {
     Start-BrowserProcess -FilePath $exe -ArgumentList $arguments
 }
 
+function Get-BrowserProfileUsage {
+    # Internal. The usage text, as the Mac's browser-profile prints it.
+    [OutputType([string])]
+    param()
+    return @'
+Usage:
+  browser-profile ensure-defaults
+  browser-profile add NAME
+  browser-profile list
+  browser-profile open chrome|firefox NAME
+
+Profile names use lowercase letters, numbers, dots, underscores and hyphens.
+'@
+}
+
 function Invoke-BrowserProfileCommand {
     <#
     .SYNOPSIS
         Runs one browser-profile command and returns the exit code.
     .PARAMETER Command
-        ensure-defaults, add, list or open (default list).
+        ensure-defaults, add, list, open or help (default list).
     .PARAMETER Argument
         The command's arguments: add NAME, open BROWSER NAME.
     #>
@@ -202,6 +252,7 @@ function Invoke-BrowserProfileCommand {
     }
     try {
         switch ($Command) {
+            { $_ -in 'help', '-h', '--help' } { Write-Host (Get-BrowserProfileUsage) }
             'ensure-defaults' {
                 if ($Argument.Count -ne 0) { throw 'ensure-defaults takes no arguments.' }
                 foreach ($name in $script:DefaultProfiles) { Initialize-BrowserProfile -Name $name }
@@ -220,7 +271,10 @@ function Invoke-BrowserProfileCommand {
                 if ($Argument.Count -ne 2) { throw 'open requires a browser and a profile name.' }
                 Open-BrowserProfile -Browser $Argument[0] -Name $Argument[1]
             }
-            default { throw "Unknown command: $Command (ensure-defaults, add, list, open)." }
+            default {
+                Write-Host (Get-BrowserProfileUsage)
+                throw "Unknown command: $Command."
+            }
         }
         return 0
     }

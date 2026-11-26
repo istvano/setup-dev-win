@@ -11,8 +11,14 @@ Describe 'Test-BrowserProfileName' {
     It 'accepts <_>' -ForEach @('personal', 'work', 'cloud-admin', 'a.b_c-1', '9lives') {
         Test-BrowserProfileName -Name $_ | Should-BeTrue
     }
-    It 'refuses <_>' -ForEach @('', 'Work', '../escape', 'a/b', 'a\b', '-lead', '.hidden', 'sp ace', 'quo"te', 'a:b') {
+    It 'refuses <_>' -ForEach @('', 'Work', "work`n", 'con', 'CON', 'nul', 'aux', 'prn', 'com1', 'lpt9', 'a.', 'work.', '../escape', 'a/b', 'a\b', '-lead', '.hidden', 'sp ace', 'quo"te', 'a:b') {
         Test-BrowserProfileName -Name $_ | Should-BeFalse
+    }
+}
+
+Describe 'Test-BrowserProfileName reserved names' {
+    It 'accepts names that only contain a reserved word' -ForEach @('console', 'com10', 'null', 'my-con', 'lpt0') {
+        Test-BrowserProfileName -Name $_ | Should-BeTrue
     }
 }
 
@@ -57,6 +63,15 @@ Describe 'Initialize-BrowserProfile and Get-BrowserProfile' {
         $null = New-Item -ItemType SymbolicLink -Path (Join-Path (Join-Path $script:Base 'chrome') 'linked') -Target $outside
         { Initialize-BrowserProfile -Name linked } | Should-Throw
     }
+    It 'refuses a link in any ancestor between LOCALAPPDATA and the profile' -Skip:(-not ($IsLinux -or $IsMacOS)) {
+        $env:LOCALAPPDATA = Join-Path $TestDrive "la-$([guid]::NewGuid().ToString('N'))"
+        $outside = Join-Path $TestDrive "elsewhere-$([guid]::NewGuid().ToString('N'))"
+        $null = New-Item -ItemType Directory -Path $outside, $env:LOCALAPPDATA
+        $null = New-Item -ItemType SymbolicLink -Path (Join-Path $env:LOCALAPPDATA 'setup-dev-win') -Target $outside
+        Mock -ModuleName BrowserProfiles Get-BrowserProfileRoot { Join-Path (Join-Path $env:LOCALAPPDATA 'setup-dev-win') 'browsers' }
+        { Initialize-BrowserProfile -Name work } | Should-Throw -ExceptionMessage '*linked*'
+        Test-Path -LiteralPath (Join-Path $outside 'browsers') | Should-BeFalse
+    }
     It 'lists browser and name, sorted, and ignores files' {
         Initialize-BrowserProfile -Name work
         Initialize-BrowserProfile -Name personal
@@ -93,6 +108,11 @@ Describe 'Get-BrowserExecutable' {
     It 'returns null when the browser is absent' {
         Get-BrowserExecutable -Browser firefox | Should-BeNull
     }
+    It 'lists where it looked' {
+        $places = InModuleScope BrowserProfiles { Get-BrowserSearchPath -Browser chrome }
+        $places.Count | Should-Be 3
+        $places | Should-ContainCollection @((Join-Path 'P' 'Google/Chrome/Application/chrome.exe'))
+    }
 }
 
 Describe 'Open-BrowserProfile' {
@@ -116,9 +136,13 @@ Describe 'Open-BrowserProfile' {
         $script:Started.Path | Should-Be 'X:\firefox.exe'
         $script:Started.Args | Should-BeCollection @('-no-remote', '-profile', ('"' + (Join-Path (Join-Path $script:Base 'firefox') 'work') + '"'))
     }
-    It 'never passes a default-profile path' {
+    It 'only ever passes a data dir that is a child of the isolated root' {
         Open-BrowserProfile -Browser chrome -Name personal
-        ($script:Started.Args -join ' ') | Should -Not -Match 'User Data'
+        $dir = ($script:Started.Args[0] -replace '^"--user-data-dir=', '') -replace '"$', ''
+        (Split-Path -Parent (Split-Path -Parent $dir)) | Should-Be $script:Base
+        Open-BrowserProfile -Browser firefox -Name personal
+        $dir = $script:Started.Args[2].Trim('"')
+        (Split-Path -Parent (Split-Path -Parent $dir)) | Should-Be $script:Base
     }
     It 'fails with the profile hint when the browser is not installed' {
         Mock -ModuleName BrowserProfiles Get-BrowserExecutable { $null }
@@ -164,8 +188,23 @@ Describe 'Invoke-BrowserProfileCommand' {
     It 'open with the wrong argument count fails' {
         Invoke-BrowserProfileCommand -Command 'open' -Argument @('firefox') | Should-Be 1
     }
-    It 'an unknown command fails' {
+    It 'an unknown command prints usage and fails' {
+        $script:Hosted = @()
+        Mock -ModuleName BrowserProfiles Write-Host { $script:Hosted += [string]$Object }
         Invoke-BrowserProfileCommand -Command 'nuke' | Should-Be 1
+        ($script:Hosted -join "`n") | Should -Match 'Usage:'
+        ($script:Warned -join ' ') | Should -Match 'Unknown command: nuke'
+    }
+    It '<_> prints usage and succeeds' -ForEach @('help', '-h', '--help') {
+        $script:Hosted = @()
+        Mock -ModuleName BrowserProfiles Write-Host { $script:Hosted += [string]$Object }
+        Invoke-BrowserProfileCommand -Command $_ | Should-Be 0
+        ($script:Hosted -join "`n") | Should -Match 'ensure-defaults'
+        $script:Made.Count | Should-Be 0
+    }
+    It 'help with extra arguments is still usage' {
+        Mock -ModuleName BrowserProfiles Write-Host { }
+        Invoke-BrowserProfileCommand -Command 'help' -Argument @('x') | Should-Be 0
     }
     It 'list is the default and succeeds' {
         Invoke-BrowserProfileCommand | Should-Be 0

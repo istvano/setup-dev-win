@@ -19,6 +19,7 @@
 > | Defaults re-applied on every run; no `-LinuxUser` | `-Profiles`, `-DistroRoot`, `-LinuxUser` persisted in `state.json`; `bootstrap.ps1` passes `-DistroRoot` and `-LinuxUser` through when given | ADR-015 |
 > | Image `Ubuntu-26.04` pinned by URL and SHA256 in the lock | The lock keeps `Name` and `Source`; URL and SHA256 are read from `DistributionInfo.json` at install time and the download is verified against them | ADR-016 |
 > | Image downloaded to the temp directory | Cached in `<DistroRoot>\cache` | ADR-016 |
+> | Section 5.1 ownership table: VS Code server-side extensions owned by the Linux repository | Owned by no repository; the operator installs WSL-side extensions as needed (setup-dev-linux-wsl ADR-014) | ADR-025 |
 > | Pinned chezmoi version (`pins.psd1` `Chezmoi`) | Latest stable chezmoi from winget, any installed chezmoi kept | ADR-016 |
 
 Date: 2026-11-24
