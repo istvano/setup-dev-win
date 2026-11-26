@@ -1,0 +1,13 @@
+{
+    "visual": {
+        "progressBar": "rainbow"
+    },
+    "telemetry": {
+        "other": 1
+    },
+    "installBehavior": {
+        "preferences": {
+            "scope": "user"
+        }
+    }
+}

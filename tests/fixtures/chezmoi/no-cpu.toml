@@ -1,0 +1,4 @@
+[data]
+    wslDistroRoot = 'D:\WSL'
+    hostMemoryGB = 94
+    logicalProcessors = 0

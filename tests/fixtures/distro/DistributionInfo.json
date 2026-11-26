@@ -1,0 +1,43 @@
+{
+  "ModernDistributions": {
+    "Ubuntu": [
+      {
+        "Name": "Ubuntu-24.04",
+        "FriendlyName": "Ubuntu 24.04 LTS",
+        "Default": true,
+        "Amd64Url": {
+          "Url": "https://releases.ubuntu.com/24.04.3/ubuntu-24.04.3-wsl-amd64.wsl",
+          "Sha256": "0x1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "Arm64Url": {
+          "Url": "https://releases.ubuntu.com/24.04.3/ubuntu-24.04.3-wsl-arm64.wsl",
+          "Sha256": "0x2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      },
+      {
+        "Name": "Ubuntu-26.04",
+        "FriendlyName": "Ubuntu 26.04 LTS",
+        "Default": false,
+        "Amd64Url": {
+          "Url": "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-wsl-amd64.wsl",
+          "Sha256": "0x48D56724B5C8E60F24893E83E73BBB58C60B3CA22FBA3DA977075420ACD54104"
+        },
+        "Arm64Url": {
+          "Url": "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-wsl-arm64.wsl",
+          "Sha256": "0x3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      }
+    ],
+    "Debian": [
+      {
+        "Name": "Debian",
+        "FriendlyName": "Debian GNU/Linux",
+        "Default": true,
+        "Amd64Url": {
+          "Url": "https://salsa.debian.org/debian/WSL/-/jobs/1/artifacts/raw/Debian_WSL_AMD64.wsl",
+          "Sha256": "0x4444444444444444444444444444444444444444444444444444444444444444"
+        }
+      }
+    ]
+  }
+}
