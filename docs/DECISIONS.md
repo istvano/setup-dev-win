@@ -584,8 +584,9 @@ above.
 Status: accepted, 2026-11-26 (phase W5); operator decision.
 
 `pwsh -File script\hardening-check.ps1` reads the machine's security and privacy
-settings and prints each with a recommendation. It changes nothing, never elevates and
-never prompts. The operator chose "check values and list recommendations" over applying
+settings and prints each with a recommendation. It writes no setting, never elevates and
+never prompts; winget may refresh its own source cache and writes a temporary export
+file that it deletes. The operator chose "check values and list recommendations" over applying
 hardening: phase W5's apply half is deferred, and `TASKS.md` says so. The report's source
 of truth is `script/lib/PostureChecks.psm1`; `tests/Repo.Tests.ps1` refuses a registry
 write, a `Set-`, `Enable-`, `Disable-` or `Remove-` cmdlet, a `netsh` add, set or delete
@@ -613,7 +614,9 @@ because Microsoft's default for it is block. The listener check covers `wslrelay
 non-loopback address; LM Studio's process name is unconfirmed until it is seen on
 hardware. An AutoPlay with no value means on. Diagnostic data reads the Group Policy
 value, then the Settings value. Copilot is found through `Get-AppxPackage` and winget.
-simplewall is reported as installed and its filtering is the operator's. The admin-account
+simplewall is reported as installed and its filtering is the operator's. The PowerShell 2.0 engine was
+removed from Windows 11 24H2 (KB5065506), so its feature row is absent; the report says
+`Absent (removed from Windows)` when the feature list reads fine without it. The admin-account
 row is `INFO`: the daily account is an administrator (spec section 6.2).
 
 What a later apply phase would need, none of which exists:

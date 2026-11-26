@@ -75,3 +75,5 @@ Deferred review findings from milestone 1, one line each; none blocks the milest
 - [ ] `script/verify.ps1`: the `exit` wrapper itself is untested; `Invoke-VerifyCommand` is (N51).
 - [ ] README step 3 is paraphrased (N52).
 - [ ] chezmoi: pin `sourceDir` in the generated config and prefer the winget-installed binary over another chezmoi earlier on PATH (m11).
+- [ ] Posture report: flag `ConsentPromptBehaviorAdmin=0` (elevate without prompting).
+- [ ] Posture report: read LSA protection's runtime state from Wininit event 12 when `RunAsPPL` is absent.
