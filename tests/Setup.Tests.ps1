@@ -17,7 +17,7 @@ Describe 'Invoke-SetupRun' {
         Mock -ModuleName State Get-CimInstance { [pscustomobject]@{ LastBootUpTime = $script:Boot } }
         Mock -ModuleName Runner Test-IsElevated { $false }
         Mock -ModuleName Runner Get-EditionInfo { @{ Edition = 'Professional'; IsHome = $false; IsPro = $true } }
-        foreach ($n in 'Preflight', 'Features', 'Dotfiles', 'Wsl', 'Verify') {
+        foreach ($n in 'Preflight', 'Features', 'Apps', 'Dotfiles', 'Wsl', 'Verify') {
             Mock -ModuleName Runner "Invoke-${n}Stage" { 'done' }
         }
         Mock -ModuleName Runner Write-Warn { $script:Warned += $Message }
@@ -40,11 +40,11 @@ Describe 'Invoke-SetupRun' {
 
     It 'runs stages in order and exits 0' {
         $log = [System.Collections.Generic.List[string]]::new()
-        foreach ($n in 'Preflight', 'Features', 'Dotfiles', 'Wsl', 'Verify') {
+        foreach ($n in 'Preflight', 'Features', 'Apps', 'Dotfiles', 'Wsl', 'Verify') {
             Mock -ModuleName Runner "Invoke-${n}Stage" { $log.Add($n); 'done' }.GetNewClosure()
         }
         Invoke-SetupRun | Should-Be 0
-        ($log -join ',') | Should-Be 'Preflight,Features,Dotfiles,Wsl,Verify'
+        ($log -join ',') | Should-Be 'Preflight,Features,Apps,Dotfiles,Wsl,Verify'
         Get-StageResult -Stage 'wsl' | Should-Be 'done'
     }
 
@@ -106,12 +106,26 @@ Describe 'Invoke-SetupRun' {
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-DotfilesStage
     }
 
-    It 'a second complete run invokes only verify' {
+    It 'a second complete run invokes only apps and verify' {
         Invoke-SetupRun | Should-Be 0
         Invoke-SetupRun | Should-Be 0
+        Should-Invoke -ModuleName Runner -CommandName Invoke-AppsStage -Times 2 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-PreflightStage -Times 1 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-WslStage -Times 1 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 2 -Exactly
+    }
+
+    It 'apps runs on every pass even when recorded done, so a newly added profile installs' {
+        Set-StageResult -Stage 'apps' -Result 'done'
+        Invoke-SetupRun | Should-Be 0
+        Should-Invoke -ModuleName Runner -CommandName Invoke-AppsStage -Times 1 -Exactly
+    }
+
+    It '-Stage apps runs only apps' {
+        Invoke-SetupRun -Stage 'apps' | Should-Be 0
+        Should-Invoke -ModuleName Runner -CommandName Invoke-AppsStage -Times 1 -Exactly
+        Should-NotInvoke -ModuleName Runner -CommandName Invoke-FeaturesStage
+        Should-NotInvoke -ModuleName Runner -CommandName Invoke-VerifyStage
     }
 
     It '-Stage features runs only features, ignoring recorded state' {

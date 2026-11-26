@@ -28,7 +28,7 @@
 [CmdletBinding()]
 param(
     [string]$Profiles,
-    [ValidateSet('preflight', 'features', 'dotfiles', 'wsl', 'verify')][string]$Stage,
+    [ValidateSet('preflight', 'features', 'apps', 'dotfiles', 'wsl', 'verify')][string]$Stage,
     [switch]$Plan,
     [string]$LinuxRepoUrl,
     [string]$LinuxRef = 'main',

@@ -14,7 +14,7 @@ foreach ($stageModule in Get-ChildItem -LiteralPath (Join-Path (Split-Path -Pare
     Import-Module $stageModule.FullName -Force
 }
 
-$script:StageOrder = @('preflight', 'features', 'dotfiles', 'wsl', 'verify')
+$script:StageOrder = @('preflight', 'features', 'apps', 'dotfiles', 'wsl', 'verify')
 $script:ValidProfiles = Get-ValidProfiles
 # pwsh -File: the default shell is Windows PowerShell 5.1, which cannot run setup.ps1.
 $script:RebootMessage = 'Reboot, then run pwsh -File script\setup.ps1 again (or powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1).'
@@ -68,7 +68,7 @@ function Invoke-SetupRun {
     [OutputType([int])]
     param(
         [string]$Profiles,
-        [ValidateSet('preflight', 'features', 'dotfiles', 'wsl', 'verify')][string]$Stage,
+        [ValidateSet('preflight', 'features', 'apps', 'dotfiles', 'wsl', 'verify')][string]$Stage,
         [switch]$Plan,
         [string]$LinuxRepoUrl,
         [string]$LinuxRef = 'main',
@@ -123,7 +123,7 @@ function Invoke-SetupRun {
     foreach ($name in $stages) {
         if (-not $explicit -and -not $Plan) {
             $prior = Get-StageResult -Stage $name
-            if ($prior -eq 'done' -and $name -ne 'verify') {
+            if ($prior -eq 'done' -and $name -notin @('apps', 'verify')) {
                 Write-Info "Stage '$name' already done; skipping."
                 continue
             }
