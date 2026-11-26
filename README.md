@@ -13,6 +13,8 @@ profile, Windows Terminal settings and the PowerShell telemetry opt-out, and app
 the Windows-side VS Code extensions. Hardware acceptance of W3 and W4 is open. Windows
 defaults and hardening are listed in `TASKS.md`. `pwsh -File script\hardening-check.ps1` is a
 read-only security and privacy report with recommendations; nothing is applied (ADR-026).
+`pwsh -File script\browser-profile.ps1 ensure-defaults` creates isolated `personal` and `work`
+browser data roots for Chrome and Firefox (ADR-027).
 
 ## Profiles
 

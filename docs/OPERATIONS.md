@@ -571,7 +571,7 @@ Hardware security keys:
 ## Browser profiles
 
 `script\browser-profile.ps1` keeps Chrome and Firefox contexts in separate data roots
-under `%LOCALAPPDATA%\setup-dev-win\browsers\<name>` (ADR-027). It never touches a
+under `%LOCALAPPDATA%\setup-dev-win\browsers\<browser>\<name>` (ADR-027). It never touches a
 browser's default profile and never elevates.
 
 ```powershell
