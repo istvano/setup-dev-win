@@ -69,6 +69,10 @@ package exists.
   (ADR-024). `vscode/extensions.list`: Windows-side VS Code extensions (ADR-025). The
   repository never edits VS Code's or Zed's `settings.json`. The `apps`, `dotfiles` and
   `verify` stages run on every pass.
+- `script/lib/PostureChecks.psm1`: the declared posture checks behind
+  `script/hardening-check.ps1` (ADR-026). The report is read-only and a repository test
+  enforces it: no registry write, no `Set-`/`Enable-`/`Disable-`/`Remove-`, no `netsh`
+  change, no elevation. A value that cannot be read is `UNKNOWN`, never `RECOMMEND`.
 - `tests/`: Pester 6 tests; `tests/tool-versions.psd1` pins the gate's own tools.
 - `docs/ARCHITECTURE.md`: current boundaries. `docs/DECISIONS.md`: the ADR log.
   `docs/OPERATIONS.md`: the runbook. `TASKS.md`: unfinished work only.

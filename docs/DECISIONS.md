@@ -578,3 +578,51 @@ PowerShell telemetry is switched off with the user environment variable
 `POWERSHELL_TELEMETRY_OPTOUT=1` (HKCU), set by the dotfiles stage only when it is not
 already `1`; `verify` checks it. Other tools' telemetry is the operator's setting, as
 above.
+
+## ADR-026: Posture is reported, not applied, for now
+
+Status: accepted, 2026-11-26 (phase W5); operator decision.
+
+`pwsh -File script\hardening-check.ps1` reads the machine's security and privacy
+settings and prints each with a recommendation. It changes nothing, never elevates and
+never prompts. The operator chose "check values and list recommendations" over applying
+hardening: phase W5's apply half is deferred, and `TASKS.md` says so. The report's source
+of truth is `script/lib/PostureChecks.psm1`; `tests/Repo.Tests.ps1` refuses a registry
+write, a `Set-`, `Enable-`, `Disable-` or `Remove-` cmdlet, a `netsh` add, set or delete
+and `Start-Process -Verb RunAs` in code (a recommendation may name such a command inside
+a string).
+
+Statuses: `OK`, `RECOMMEND`, `INFO` and `UNKNOWN`. A reader that throws, returns nothing
+or finds no value is `UNKNOWN` with the reason, never `RECOMMEND`: tamper protection,
+policy and missing rights hide values, and a hidden value is not a finding. A read that
+needs an elevated terminal says `UNKNOWN (needs an elevated terminal)`. Exit code is 0;
+with `-Strict` it is 1 when any check is `RECOMMEND`; `UNKNOWN` never fails.
+
+Home limits. The machine is Windows 11 Home, so policies that are Pro or Enterprise only
+are not recommended. Attack surface reduction is documented by Microsoft for
+Pro/Enterprise, so the report counts configured rules as `INFO` and recommends none.
+Windows Update for Business policies are ignored. Smart App Control cannot be turned back
+on without a reinstall, so it is `INFO`. Group Policy values are still read first where a
+setting honours one (diagnostic data, Remote Assistance, Advertising ID, AutoPlay,
+activity history), because Home can carry them from other tools.
+
+Deliberate readings. The firewall values come from the effective policy store
+(`ActiveStore`); the WSL Hyper-V firewall (`Block` or `NotConfigured`) accepts either,
+because Microsoft's default for it is block. The listener check covers `wslrelay`,
+`vmmem`, `vmmemWSL`, `docker-proxy`, `com.docker.backend`, `vpnkit` and `LM Studio` on a
+non-loopback address; LM Studio's process name is unconfirmed until it is seen on
+hardware. An AutoPlay with no value means on. Diagnostic data reads the Group Policy
+value, then the Settings value. Copilot is found through `Get-AppxPackage` and winget.
+simplewall is reported as installed and its filtering is the operator's. The admin-account
+row is `INFO`: the daily account is an administrator (spec section 6.2).
+
+What a later apply phase would need, none of which exists:
+
+- One allowlisted elevated script under `script/elevated/` (ADR-004), one UAC prompt.
+- Read-back verification of every write. Tamper protection silently ignores writes to
+  Defender settings, so exit 0 from the cmdlet proves nothing.
+- Never: UEFI-locked VBS or LSA, disabling UAC, an inbound allow on the WSL firewall,
+  port proxies, Controlled Folder Access, or automatic Defender exclusions.
+- Memory integrity stays check-only. The black-screen restart recorded in ADR-019 had an
+  unknown cause involving the hypervisor, and a scripted change there could lock the
+  operator out.

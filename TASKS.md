@@ -17,8 +17,12 @@ implemented. "Phase Wn" is a spec phase, not a decision; decisions are the ADRs 
 - [ ] Phase W4 acceptance: the code, ADR-024, ADR-025 and the runbook are done; run the
       "W4 acceptance" checklist in `docs/OPERATIONS.md` on hardware, then set the values
       under "Manual settings". Done when Terminal opens `dev` with the font and posture.
-- [ ] Phase W5: Windows defaults, hardening apply and check, network exposure checks.
-      Done when `hardening-check -Strict` passes.
+- [ ] Phase W5 posture report: done and unit-tested (`script\hardening-check.ps1`,
+      ADR-026). Open: run the "Posture report acceptance" checklist in `docs/OPERATIONS.md`
+      on hardware, non-elevated and elevated.
+- [ ] Phase W5 apply (Windows defaults and a hardening apply script): deferred by operator
+      decision of 2026-11-26; the report only lists recommendations. ADR-026 says what
+      an apply phase would need. Start only when the operator asks.
 - [ ] Phase W6: Hyper-V test harness and lab VM (Pro). Done when the full bootstrap
       passes in the VM.
 - [ ] Phase W7 (both repositories): the LM Studio bridge, Windows-side Claude policy,
