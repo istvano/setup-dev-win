@@ -5,6 +5,8 @@
 # An entry may set Source = 'msstore' (Microsoft Store product Id); absent means the
 # winget community source. msstore is for MSIX packages that declare services, which
 # need an elevated deployment from the winget source but not from the Store (ADR-023).
+# A Store entry also sets WingetId: the winget-source id `winget export` lists the same
+# app under, so the verify drift line counts it as declared.
 @{
     Default = @('core', 'dev', 'security', 'productivity')
     DefaultCap = 40
@@ -36,7 +38,7 @@
             @{ Id = 'Mozilla.Firefox'; Name = 'Firefox' }
             @{ Id = 'SlackTechnologies.Slack'; Name = 'Slack' }
             @{ Id = 'Anthropic.Claude'; Name = 'Claude' }
-            @{ Id = '9PLM9XGG6VKS'; Name = 'ChatGPT'; Source = 'msstore' }
+            @{ Id = '9PLM9XGG6VKS'; Name = 'ChatGPT'; Source = 'msstore'; WingetId = 'OpenAI.ChatGPT' }
             @{ Id = 'OBSProject.OBSStudio'; Name = 'OBS Studio' }
             @{ Id = 'mpv.net'; Name = 'mpv.net' }
             @{ Id = 'Tailscale.Tailscale'; Name = 'Tailscale' }

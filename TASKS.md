@@ -9,9 +9,11 @@ implemented. "Phase Wn" is a spec phase, not a decision; decisions are the ADRs 
       hand-over on a machine without `D:`, the elevated-launch refusals and the forced
       `-Name Bogus` log line on hardware, `cloud-init status --wait` exit codes, and
       the disabled/pending `InstallState` values. Run them on the next fresh machine.
-- [ ] Phase W3 acceptance: the code, ADR-020 to ADR-022 and the runbook are done; run
-      the "W3 acceptance" checklist in `docs/OPERATIONS.md` on a machine that already
-      has Chrome and Firefox installed by hand.
+- [ ] Phase W3 acceptance leftovers (the run of 2026-11-26 passed: every app installed
+      or adopted, a second run installed nothing and exited 0): confirm
+      `JetBrainsMono Nerd Font Mono` in Windows Terminal's font list after closing every
+      Terminal window, see a re-run of `-Stage apps` retry only a failed app, and see the
+      profiles hint on a machine that kept `profiles = core` without `-Profiles`.
 - [ ] Phase W4 acceptance: the code, ADR-024, ADR-025 and the runbook are done; run the
       "W4 acceptance" checklist in `docs/OPERATIONS.md` on hardware, then set the values
       under "Manual settings". Done when Terminal opens `dev` with the font and posture.

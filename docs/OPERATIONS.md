@@ -358,10 +358,10 @@ acceptance machine (Windows 11 Home), profiles
 
 - [x] 2026-11-26: the default profiles and the opt-in extras installed with no elevated
       run; the only failure was ChatGPT from the winget source (see below).
-- [ ] Chrome and Firefox installed by hand and a run with `productivity-extra` adopts
-      them: no second copy. 2026-11-26: Firefox was reported `already installed`; Chrome
-      was not matched by `winget list` and its installer ran (`Installed Google
-      Chrome`). Check Settings > Apps for a second Chrome entry.
+- [x] 2026-11-26: Chrome and Firefox installed by hand end up as one copy each. Firefox
+      was reported `already installed`; Chrome was not matched by `winget list`, so its
+      installer ran (`Installed Google Chrome`) and updated the existing copy in place:
+      Settings > Apps shows a single Chrome.
 - [x] 2026-11-26: Windows Terminal (inbox) is reported already installed.
 - [x] 2026-11-26: a failed app fails only that app: the stage named it, the run continued
       through `dotfiles`, `wsl` and `verify` and exited 1 (seen with ChatGPT rather than a
@@ -371,14 +371,16 @@ acceptance machine (Windows 11 Home), profiles
       now in `profiles/drift-allowlist.psd1`.
 - [ ] Close every Windows Terminal window (sign out if it is still missing), then
       `JetBrainsMono Nerd Font Mono` is in Terminal's font list.
-- [ ] An immediate second `pwsh -File script\setup.ps1` run reports every app already
-      installed, installs nothing and raises no UAC prompt.
+- [x] 2026-11-26: a second `pwsh -File script\setup.ps1` run reported all 19 apps and the
+      font already installed, installed nothing, raised no UAC prompt, passed `OK Apps`
+      and exited 0. Its drift line showed `OpenAI.ChatGPT`, the Store ChatGPT under its
+      winget-source name; the catalogue's `WingetId` now covers it.
 - [x] 2026-11-26: `Anthropic.Claude` installed from the non-elevated run.
       `OpenAI.ChatGPT` from the winget source failed with `0x80073d28` (administrator
       privileges required: the MSIX declares services); `winget install --id
       9PLM9XGG6VKS --source msstore` installed it with no UAC prompt and exit 0. The
-      catalogue now uses the Store entry (ADR-023). Still to see: the next run reports
-      ChatGPT `already installed` through `winget list --source msstore`.
+      catalogue now uses the Store entry (ADR-023). The next run reported ChatGPT
+      `already installed` through `winget list --source msstore`.
 - [ ] A machine with `profiles = core` kept from milestone 1 prints the profiles line and
       the `-Profiles` hint.
 
