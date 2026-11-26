@@ -49,10 +49,17 @@ function Invoke-DotfilesStage {
             Set-UserEnvironmentVariable -Name 'POWERSHELL_TELEMETRY_OPTOUT' -Value '1'
             Write-Ok 'PowerShell telemetry opt-out set for this user (POWERSHELL_TELEMETRY_OPTOUT=1).'
         }
-        switch (Update-TerminalSettings) {
-            'updated' { Write-Ok 'Windows Terminal settings updated.' }
-            'unchanged' { Write-Ok 'Windows Terminal settings are up to date.' }
-            default { Write-Info 'Windows Terminal is not set up for this user yet; skipped.' }
+        # A Terminal settings problem (unparseable file, sharing violation, access denied) must
+        # not stop the wsl stage behind this one; verify keeps reporting it (ADR-024).
+        try {
+            switch (Update-TerminalSettings) {
+                'updated' { Write-Ok 'Windows Terminal settings updated.' }
+                'unchanged' { Write-Ok 'Windows Terminal settings are up to date.' }
+                default { Write-Info 'Windows Terminal is not set up for this user yet; skipped.' }
+            }
+        }
+        catch {
+            Write-Warn "Windows Terminal settings were not changed: $($_.Exception.Message)"
         }
     }
     catch {

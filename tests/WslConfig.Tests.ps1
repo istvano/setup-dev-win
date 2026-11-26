@@ -229,6 +229,11 @@ Describe 'Invoke-ChezmoiApply generic backup' {
         $backups[0].Name | Should-MatchString '\.backup\.\d{8}T\d{6}Z$'
         (Get-Content -LiteralPath $backups[0].FullName -Raw).Trim() | Should-Be 'Set-Alias ll Get-ChildItem'
     }
+    It 'backs up a managed file that differs only in case' {
+        Set-Content -LiteralPath $script:Prof -Value @('WANTED', 'content')
+        $null = Invoke-ChezmoiApply
+        @(Get-ChildItem -LiteralPath $script:TmpDir -Force -Filter 'Microsoft.PowerShell_profile.ps1.backup.*').Count | Should-Be 1
+    }
     It 'does not back up a managed file that already matches, or one that does not exist' {
         Set-Content -LiteralPath $script:Prof -Value @('wanted', 'content')
         $null = Invoke-ChezmoiApply
@@ -318,10 +323,15 @@ Describe 'Invoke-DotfilesStage' {
         Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'
         Should-Invoke -ModuleName Dotfiles -CommandName Write-Info -ParameterFilter { $Message -eq 'Windows Terminal is not set up for this user yet; skipped.' }
     }
-    It 'fails the stage with the reason when Terminal settings cannot be merged' {
+    It 'warns with the reason but still returns done when Terminal settings cannot be merged' {
         Mock -ModuleName Dotfiles Update-TerminalSettings { throw 'settings.json is not valid JSON' }
+        Invoke-DotfilesStage -Context $script:ctx | Should-Be 'done'
+        Should-Invoke -ModuleName Dotfiles -CommandName Write-Warn -ParameterFilter { $Message -eq 'Windows Terminal settings were not changed: settings.json is not valid JSON' }
+    }
+    It 'still returns failed when something other than Terminal settings fails' {
+        Mock -ModuleName Dotfiles Update-TerminalSettings { throw 'locked' }
+        Mock -ModuleName Dotfiles Set-UserEnvironmentVariable { throw 'registry denied' }
         Invoke-DotfilesStage -Context $script:ctx | Should-Be 'failed'
-        Should-Invoke -ModuleName Dotfiles -CommandName Write-Warn -ParameterFilter { $Message -like '*settings.json is not valid JSON*' }
     }
     It 'plan mode lists the three actions and changes nothing' {
         Invoke-DotfilesStage -Context $script:ctx -Plan | Should-Be 'done'

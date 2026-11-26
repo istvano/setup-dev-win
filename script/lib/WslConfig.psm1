@@ -100,7 +100,7 @@ function Invoke-ChezmoiApply {
         $rendered = Invoke-Native -FilePath $chezmoi -ArgumentList @('cat', '--source', $source, $target)
         $wanted = (($rendered.Output -join "`n") -replace "`r`n", "`n").Trim()
         $existing = ((Get-Content -LiteralPath $target -Raw) -replace "`r`n", "`n").Trim()
-        if ($existing -ne $wanted) {
+        if ($existing -cne $wanted) {
             $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd\THHmmss\Z')
             $backup = "$target.backup.$stamp"
             Copy-Item -LiteralPath $target -Destination $backup

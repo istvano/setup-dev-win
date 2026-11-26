@@ -235,6 +235,15 @@ Describe 'Invoke-VerifyChecks' {
         (Test-Line 'FAIL Apps: *VS Code extension a.one*VS Code extension b.two*') | Should-BeTrue
     }
 
+    It 'Apps: a failing extension listing keeps the package and font problems and names the reason' {
+        $script:Missing = @('Git.Git')
+        $script:FontOk = $false
+        Mock -ModuleName Verify Get-MissingVSCodeExtensions { throw 'code exited 1' }
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core', 'dev')))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
+        (Test-Line 'FAIL Apps: missing Git*JetBrains Mono Nerd Font is not installed*could not list VS Code extensions: code exited 1*') | Should-BeTrue
+    }
+
     It 'Apps: ignores extensions without dev or without VS Code' {
         $script:MissingExt = @('a.one')
         $r = @(Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core')))

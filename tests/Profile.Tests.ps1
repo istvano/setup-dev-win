@@ -23,11 +23,12 @@ Describe 'PowerShell profile (chezmoi source)' {
         $script:Text | Should-MatchString '-PredictionSource History'
     }
     It 'defines dev as a wrapper over wsl.exe -d dev in the Linux home, passing arguments through' {
-        $script:Text | Should-MatchString 'function dev \{ wsl\.exe -d dev --cd [^\r\n]*@args \}'
+        $script:Text | Should-MatchString "(?m)^function dev \{ wsl\.exe -d dev --cd '~' @args \}\s*$"
     }
-    It 'never passes a bare tilde to a native command (PowerShell 7.5+ expands it to the Windows profile)' {
+    It 'passes the tilde only as the quoted literal of wsl.exe --cd (PowerShell 7.5+ expands any other form)' {
         $code = ($script:Text -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
         ($code -match '\s~(\s|$)') | Should-BeFalse
+        ($code -match '\[char\]\s*126') | Should-BeFalse
     }
     It 'holds no secrets and makes no network calls' {
         ($script:Text -match '(?i)invoke-webrequest|invoke-restmethod|\bcurl\b|\bwget\b|https?://|token|password|secret|apikey') | Should-BeFalse

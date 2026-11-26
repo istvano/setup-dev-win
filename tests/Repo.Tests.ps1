@@ -146,11 +146,25 @@ Describe 'Workflows' {
 }
 
 Describe 'Native argument invariants' {
-    It 'no string literal starts with ~ (PowerShell 7.5+ expands it to the Windows profile in native arguments)' {
+    # PowerShell 7.5+ expands a tilde in a native argument to the Windows profile path for
+    # every form except a quoted literal written at the call site (ADR-024; the W1 verify bug,
+    # commit 91e3f22). So [char]126 and friends do NOT help, and the one safe spelling is
+    # wsl.exe --cd '~'. Anywhere else, use $HOME inside the Linux command.
+    It 'no code builds a tilde from [char]126 (it is expanded like a bare ~)' {
         $offenders = foreach ($file in $script:ScriptFiles) {
             $relative = $file.FullName.Substring($script:Root.Length + 1) -replace '\\', '/'
             if ($relative -like 'tests/*') { continue }
-            if ((Get-CodeLine -Path $file.FullName) -match '[''"]~') { $relative }
+            if ((Get-CodeLine -Path $file.FullName) -match '\[char\]\s*126') { $relative }
+        }
+        @($offenders) | Should-BeCollection @()
+    }
+    It 'no quoted string starts with ~ except the direct argument of wsl.exe --cd' {
+        $offenders = foreach ($file in $script:ScriptFiles) {
+            $relative = $file.FullName.Substring($script:Root.Length + 1) -replace '\\', '/'
+            if ($relative -like 'tests/*') { continue }
+            foreach ($line in @(Get-CodeLine -Path $file.FullName)) {
+                if ($line -match '[''"]~' -and $line -notmatch 'wsl\.exe\b.*--cd\s+[''"]~[''"]') { "${relative}: $line" }
+            }
         }
         @($offenders) | Should-BeCollection @() -Because 'use $HOME inside the Linux command instead'
     }

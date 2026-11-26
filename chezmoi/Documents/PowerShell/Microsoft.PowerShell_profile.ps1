@@ -8,6 +8,10 @@ if (Get-Module -ListAvailable PSReadLine) {
 }
 
 # dev: open the dev WSL distro in the Linux home directory; arguments run a command there.
-# The tilde is built from its character code: PowerShell 7.5+ expands a bare ~ in a native
-# argument to the Windows profile path, which is not the Linux home.
-function dev { wsl.exe -d dev --cd ([string][char]126) @args }
+# The tilde is a quoted literal written at the call site because PowerShell 7.5+ expands a
+# tilde in a native argument to the Windows profile path (not the Linux home) in every other
+# form: bare, via a variable, via [char]126 or splatted (ADR-024). Only '~' or "~" typed
+# directly there reaches wsl.exe unchanged. The same expansion applies to a ~ you pass
+# through @args, so `dev ls ~` lists the Windows home: quote the whole command in one string
+# (dev 'ls ~'), or open the shell with `dev` and type there.
+function dev { wsl.exe -d dev --cd '~' @args }

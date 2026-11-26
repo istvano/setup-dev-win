@@ -149,7 +149,10 @@ function Invoke-VerifyChecks {
                 if ($missing.Count -gt 0) { $problems.Add("missing $($missing -join ', ')") }
                 if ('core' -in $profiles -and -not (Test-NerdFontInstalled)) { $problems.Add('JetBrains Mono Nerd Font is not installed') }
                 if ('dev' -in $profiles -and (Get-VSCodeCli)) {
-                    foreach ($id in @(Get-MissingVSCodeExtensions)) { $problems.Add("VS Code extension $id is not installed") }
+                    try {
+                        foreach ($id in @(Get-MissingVSCodeExtensions)) { $problems.Add("VS Code extension $id is not installed") }
+                    }
+                    catch { $problems.Add("could not list VS Code extensions: $($_.Exception.Message)") }
                 }
                 if ($problems.Count -gt 0) { "$($problems -join '; '); run pwsh -File script\setup.ps1 -Stage apps." }
             }))
