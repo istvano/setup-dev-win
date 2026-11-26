@@ -40,6 +40,8 @@ Describe 'Invoke-VerifyChecks' {
         }
         Mock -ModuleName Verify Get-KernelDmaProtectionState { 'on' }
         $script:Missing = @()
+        $script:FontOk = $true
+        Mock -ModuleName Verify Test-NerdFontInstalled { $script:FontOk }
         Mock -ModuleName Verify Test-WingetPackage { $Id -notin $script:Missing }
         $script:Installed = @('Git.Git')
         $script:ExportFails = $false
@@ -171,6 +173,20 @@ Describe 'Invoke-VerifyChecks' {
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
         ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
         (Test-Line 'FAIL Apps: missing Git (Git.Git), chezmoi (twpayne.chezmoi); run pwsh -File script\setup.ps1 -Stage apps.') | Should-BeTrue
+    }
+
+    It 'Apps: a missing font fails with JetBrains Mono Nerd Font is not installed' {
+        $script:FontOk = $false
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
+        (Test-Line 'FAIL Apps: *JetBrains Mono Nerd Font is not installed*') | Should-BeTrue
+    }
+
+    It 'Apps: a missing package and a missing font are both reported' {
+        $script:FontOk = $false
+        $script:Missing = @('Git.Git')
+        $null = Invoke-VerifyChecks -Context (New-Ctx)
+        (Test-Line 'FAIL Apps: missing Git (Git.Git)*JetBrains Mono Nerd Font is not installed*') | Should-BeTrue
     }
 
     It 'Apps: checks only the selected profiles' {

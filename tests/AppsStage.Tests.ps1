@@ -8,6 +8,7 @@ BeforeAll {
     Import-Module (Join-Path $root 'script/lib/Common.psm1') -Force
     Import-Module (Join-Path $root 'script/lib/Apps.psm1') -Force
     Import-Module (Join-Path $root 'script/lib/Winget.psm1') -Force
+    Import-Module (Join-Path $root 'script/lib/Font.psm1') -Force
     Import-Module (Join-Path $root 'script/stages/AppsStage.psm1') -Force
 
     function Get-TestContext {
@@ -32,6 +33,7 @@ Describe 'Invoke-AppsStage' {
         }
         Mock -ModuleName AppsStage Test-WingetPackage { $false }
         Mock -ModuleName AppsStage Install-WingetPackage { 'installed' }
+        Mock -ModuleName AppsStage Install-NerdFont { 'installed' }
     }
 
     It 'prints the profiles line first, with how to change them' {
@@ -106,7 +108,36 @@ Describe 'Invoke-AppsStage' {
         Should-Invoke -ModuleName AppsStage -CommandName Get-AppPackages -Times 1 -Exactly -ParameterFilter { ($Profiles -join ',') -eq 'core,dev' }
     }
 
-    It 'does not call Install-NerdFont (Task 5 owns it)' {
-        (Get-Content -Raw (Join-Path (Split-Path -Parent $PSScriptRoot) 'script/stages/AppsStage.psm1')) | Should-NotMatchString 'Install-NerdFont'
+    It 'installs the font only when core is selected, after the packages' {
+        $script:Order = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName AppsStage Install-WingetPackage { $script:Order.Add("pkg:$Id"); 'installed' }
+        Mock -ModuleName AppsStage Install-NerdFont { $script:Order.Add('font'); 'installed' }
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('core', 'dev')) | Should-Be 'done'
+        ($script:Order -join ',') | Should-Be 'pkg:A.One,pkg:B.Two,font'
+        $script:Oks | Should-ContainCollection 'Installed JetBrains Mono Nerd Font'
+    }
+
+    It 'does not install the font without core' {
+        Invoke-AppsStage -Context (Get-TestContext -Profiles @('dev')) | Should-Be 'done'
+        Should-NotInvoke -ModuleName AppsStage -CommandName Install-NerdFont
+    }
+
+    It 'reports an already installed font without a failure' {
+        Mock -ModuleName AppsStage Install-NerdFont { 'already-installed' }
+        Invoke-AppsStage -Context (Get-TestContext) | Should-Be 'done'
+        $script:Oks | Should-ContainCollection 'JetBrains Mono Nerd Font already installed'
+    }
+
+    It 'lists a font failure like a package failure, and the packages still install' {
+        Mock -ModuleName AppsStage Install-NerdFont { throw 'SHA256 mismatch' }
+        Invoke-AppsStage -Context (Get-TestContext) | Should-Be 'failed'
+        Should-Invoke -ModuleName AppsStage -CommandName Install-WingetPackage -Times 2 -Exactly
+        ($script:Warns -join "`n") | Should-MatchString 'JetBrains Mono Nerd Font \(SHA256 mismatch\)'
+    }
+
+    It '-Plan does not install the font' {
+        Invoke-AppsStage -Context (Get-TestContext) -Plan | Should-Be 'done'
+        Should-NotInvoke -ModuleName AppsStage -CommandName Install-NerdFont
+        $script:Infos | Should-ContainCollection 'Would install JetBrains Mono Nerd Font'
     }
 }

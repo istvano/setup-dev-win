@@ -11,6 +11,7 @@ Import-Module (Join-Path $libRoot 'WslConfig.psm1') -Force
 Import-Module (Join-Path $libRoot 'Distro.psm1') -Force
 Import-Module (Join-Path $libRoot 'Apps.psm1') -Force
 Import-Module (Join-Path $libRoot 'Winget.psm1') -Force
+Import-Module (Join-Path $libRoot 'Font.psm1') -Force
 # No -Force: share the State instance the runner (or verify.ps1) loaded.
 Import-Module (Join-Path $libRoot 'State.psm1')
 
@@ -125,7 +126,10 @@ function Invoke-VerifyChecks {
                 foreach ($app in @(Get-AppPackages -Profiles $profiles)) {
                     if (-not (Test-WingetPackage -Id $app.Id)) { $missing.Add("$($app.Name) ($($app.Id))") }
                 }
-                if ($missing.Count -gt 0) { "missing $($missing -join ', '); run pwsh -File script\setup.ps1 -Stage apps." }
+                $problems = [System.Collections.Generic.List[string]]::new()
+                if ($missing.Count -gt 0) { $problems.Add("missing $($missing -join ', ')") }
+                if ('core' -in $profiles -and -not (Test-NerdFontInstalled)) { $problems.Add('JetBrains Mono Nerd Font is not installed') }
+                if ($problems.Count -gt 0) { "$($problems -join '; '); run pwsh -File script\setup.ps1 -Stage apps." }
             }))
 
     # 6. The Linux repository's own verify, run as the default user; output streams to the host.

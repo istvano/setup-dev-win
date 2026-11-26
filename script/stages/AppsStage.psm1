@@ -6,6 +6,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Common.psm1') -Force
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Apps.psm1') -Force
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Winget.psm1') -Force
+Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Font.psm1') -Force
 
 function Invoke-AppsStage {
     <#
@@ -76,6 +77,24 @@ function Invoke-AppsStage {
             'already-installed' { Write-Ok "Adopted $name (already installed outside winget)" }
             'reboot-required' { Write-Ok "Installed $name (restart required)"; $rebootNeeded = $true }
             default { $failures.Add("$id (unexpected install outcome '$outcome')") }
+        }
+    }
+
+    # The font follows the packages and belongs to core, like Windows Terminal.
+    if ('core' -in $profiles) {
+        $fontName = 'JetBrains Mono Nerd Font'
+        if ($Plan) {
+            Write-Info "Would install $fontName"
+        }
+        else {
+            try {
+                switch (Install-NerdFont) {
+                    'installed' { Write-Ok "Installed $fontName" }
+                    'already-installed' { Write-Ok "$fontName already installed" }
+                    default { $failures.Add("$fontName (unexpected install outcome)") }
+                }
+            }
+            catch { $failures.Add("$fontName ($($_.Exception.Message))") }
         }
     }
 
