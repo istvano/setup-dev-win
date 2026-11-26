@@ -572,8 +572,9 @@ section 6.5's VS Code and Zed settings management.
 
 The repository does own the Windows-side VS Code extensions, in `vscode/extensions.list`
 (one id per line, the UI and remote clients only: Remote - WSL, Remote - SSH, Remote -
-Containers, vscode-icons; language extensions run in WSL and belong to the Linux
-repository). The apps stage installs the missing ones after the font when `dev` is
+Containers, vscode-icons). WSL-side (workspace) extensions are not managed by any
+repository: the operator installs them as needed (the Linux repository decided the same,
+setup-dev-linux-wsl ADR-014). The apps stage installs the missing ones after the font when `dev` is
 selected, through `code.cmd` found on PATH or in the per-user and per-machine install
 locations; absent VS Code is a skip with an info line. Extensions install at the latest
 version (ADR-016) and nothing is ever uninstalled: removing a line only stops installing

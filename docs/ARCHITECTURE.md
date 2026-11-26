@@ -95,7 +95,7 @@ territory (spec 5.1).
 | Everything inside the distro: apt, Homebrew, mise, dotfiles, Docker, CUDA, agents | linux |
 | `/etc/wsl.conf` | linux (WSL target only) |
 | `/etc/claude-code/managed-settings.json`, `/etc/codex/requirements.toml` | linux |
-| VS Code server-side extensions (installed into `~/.vscode-server` from WSL) | linux |
+| VS Code WSL-side (workspace) extensions: the operator installs them as needed; no repository manages them (ADR-025) | operator |
 | Network exposure verify: Windows listeners, portproxy, Hyper-V firewall | win |
 | Network exposure verify: Linux listeners, Docker binds | linux |
 
