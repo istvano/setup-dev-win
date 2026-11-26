@@ -33,9 +33,9 @@ Status: accepted. Spec section 6.3.
 
 Windows has no download-and-run script. The only network-to-execution paths are
 winget (hash-pinned, Microsoft-validated), `git clone` of the operator's own
-repositories and the SHA256-verified Ubuntu image (the hash comes from Microsoft's
-manifest, ADR-016). Stage-0 never downloads winget and
-never installs a module from PSGallery. `Invoke-Expression`, `iex` and
+repositories, the SHA256-verified Ubuntu image (the hash comes from Microsoft's
+manifest, ADR-016) and the SHA256-verified Nerd Font zip from GitHub (ADR-021; never
+executed). Stage-0 never downloads winget and never installs a module from PSGallery. `Invoke-Expression`, `iex` and
 `DownloadString` are banned and enforced by `tests/Repo.Tests.ps1`.
 
 Stage-0 does not call `Set-ExecutionPolicy`. The documented launch is
@@ -381,3 +381,87 @@ Checked only by CI and unit tests, listed in `TASKS.md` for the next fresh machi
 the `-DistroRoot` hand-over without `D:`, the elevated-launch refusals, the forced
 elevated-log line, `cloud-init status --wait` exit codes and the non-enabled
 `InstallState` values.
+
+## ADR-020: Apps through a winget install loop, not winget configure
+
+Status: accepted, 2026-11-26. Supersedes spec 6.5's "WinGet Configuration v3",
+`winget configure test`, exact versions for PowerShell and Git (ADR-016) and
+`securityContext: elevated`.
+
+The apps stage installs the packages of the selected profiles with a plain loop over
+`winget list` and `winget install` (`script/stages/AppsStage.psm1`, catalogue in
+`profiles/apps.psd1`). `winget configure` was rejected for four reasons. It needs a DSC
+processor, and DSC v3 is the separate `Microsoft.DSC` package: one more dependency to
+install and trust before any app. It runs units declaratively and possibly in parallel
+and leaves the results to be checked afterwards, whereas the loop knows per package
+which outcome happened and names the package Id with a clear message per known return
+code, plus winget's own text for anything else. A loop
+adopts what is already there (below) with a mockable exit-code check. And stage-0 and
+chezmoi already install through the same `winget install` calls, so there is one
+mechanism, not two.
+
+Kept from the spec: declared profiles, check-then-install, and verify with a drift
+report. Detection uses the exit code of `winget list --id <id> --exact`, never the
+printed table, which truncates long Ids and is localised. Installs carry no
+`--version` (ADR-016) and no `--scope` unless a catalogue entry sets `Scope`; browsers
+never do, so an app the operator installed by hand is adopted, not duplicated. When
+`winget list` does not correlate such an app, the install is attempted and winget's
+"already installed", "another version already installed" or "no applicable update"
+return codes count as success (adopted). A failing package does not stop the others:
+the stage returns `failed` naming each Id and reason, and the re-run installs only what
+is still missing. Installers that need admin raise their own UAC prompt through winget;
+the stage never elevates (ADR-004).
+
+The catalogue Ids were confirmed present in microsoft/winget-pkgs on 2026-11-26 (the
+catalogue holds 21; the font is separate).
+
+## ADR-021: Nerd Font per user from the upstream release
+
+Status: accepted, 2026-11-26. Supersedes spec 6.5's local font manifest and the
+`LocalManifestFiles` setting it needed.
+
+The winget package `DEVCOM.JetBrainsMonoNerdFont` is a third-party WiX MSI repack
+(DevelopersCommunity/wix-JetBrainsMonoNF) at 3.3.0 with `ElevationRequirement:
+elevatesSelf`, while upstream ryanoasis/nerd-fonts is at v3.5.1 (published 2026-08-21).
+A local manifest would need the administrator-only `LocalManifestFiles` winget setting
+and a pinned version, against ADR-016. So `script/lib/Font.psm1` installs the font
+itself: the newest upstream release's `JetBrainsMono.zip`, verified against the SHA256
+in the release asset's `digest` field (a missing or malformed digest fails closed), from
+`github.com` or GitHub's asset hosts only, and only the `JetBrainsMonoNerdFontMono-*.ttf`
+files, by leaf name, into the per-user fonts directory with HKCU registration. No
+elevation, no web call when the font is already installed. The font belongs to `core`
+and runs after the packages. This is the one place the repository downloads a
+non-winget artefact besides the Ubuntu image; it is hash-verified and never executed
+(ADR-003). The digest and the download URL come from the same GitHub API response, so
+the hash guards against corruption and transport or CDN tampering, not against a
+compromised upstream release (unlike the Ubuntu image, whose hash comes from
+Microsoft's separate manifest). The family name registered is `JetBrainsMono Nerd Font
+Mono`.
+
+## ADR-022: Profiles and the apps stage
+
+Status: accepted, 2026-11-26.
+
+Eight profiles, in catalogue order: `core`, `dev`, `security`, `productivity`, `backup`,
+`productivity-extra`, `local-llm`, `lab` (no packages; Hyper-V only, Pro only). The
+default set is `core,dev,security,productivity`; `core` is always included. `backup`
+(restic, rclone) is opt-in by operator decision, not part of the default. The default
+set is capped at 40 entries (9 packages today: core 4, dev 2, security 2, productivity 1, plus the font) so the baseline stays reviewable.
+`productivity-extra` holds Chrome, Firefox, Slack, Claude, ChatGPT, OBS Studio, mpv.net,
+Tailscale and OpenVPN. Firefox is the regular `Mozilla.Firefox`, not the Developer
+Edition (operator decision). Hand-installed apps are adopted (ADR-020).
+
+The apps stage runs on every setup run, like verify, so a profile added later installs;
+the runner's rule that a stage recorded `done` is skipped exempts `apps` and `verify`.
+It prints the profiles in use, and how to change them, as its first line. A `profiles`
+value kept in `state.json` by an earlier run wins over the new default (flag, then kept
+value, then default, ADR-015), so a machine that persisted `core` in milestone 1 gets
+only `core` until the operator passes `-Profiles core,dev,security,productivity`.
+Installer UAC prompts come from the installers themselves (OPERATIONS).
+
+A failed `apps` stage does not stop the run (controller ruling, 2026-11-26): the runner
+records `apps` as failed, warns, runs the remaining stages and ends with exit 1 (a later
+reboot-required still returns 3010 at once). One package that cannot install must not
+block dotfiles, WSL and verify, and `-Stage apps` retries it. Every other stage keeps
+stop-on-failure, because their successors depend on them. The first line shows the
+profiles in use, the default and the available profiles.

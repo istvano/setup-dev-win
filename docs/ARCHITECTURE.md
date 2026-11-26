@@ -35,9 +35,19 @@ the default (ADR-015).
 |---|---|---|
 | preflight | edition, build, data volume, Documents not redirected, virtualization, Kernel DMA state | none |
 | features | enable `VirtualMachinePlatform` (Hyper-V only with `lab` on Pro, refused on Home); state read via CIM | one UAC prompt from this repo (`script/elevated/`); `wsl --install`/`--update` raise their own |
+| apps | install the missing packages of the selected profiles with winget and the per-user Nerd Font (ADR-020, ADR-021, ADR-022); adopts apps already installed; runs on every pass | none from this repository; installers raise their own UAC prompts; never elevates, and the runner refuses an elevated run |
 | dotfiles | latest chezmoi when none is present, apply `.wslconfig`, offer `wsl --shutdown` | refuses to run elevated |
 | wsl | image resolved from Microsoft's manifest, cached in `<root>\cache`, SHA256-verified; install `dev`, default user, password, handoff to the Linux repo | none |
-| verify | read-only checks, always run (see OPERATIONS) | none |
+| verify | read-only checks, always run (see OPERATIONS), including the Apps check and an informational drift line | none |
+
+Stage order is `preflight, features, apps, dotfiles, wsl, verify`. A failed stage stops the
+run, except `apps`: it is recorded failed and the run continues, ending with exit 1
+(ADR-022). The catalogue is
+`profiles/apps.psd1` (read by `script/lib/Apps.psm1`); winget calls go through
+`script/lib/Winget.psm1`, which maps winget return codes to outcomes; drift ignores the
+patterns in `profiles/drift-allowlist.psd1`. The stage lives in
+`script/stages/AppsStage.psm1` because a stage module may not share a name with a
+library module under Pester.
 
 Exit 3010 means reboot required; the operator re-runs `pwsh -File script\setup.ps1`.
 Elevated work lives only under `script/elevated/` and is allowlisted by name; its
@@ -45,7 +55,8 @@ Elevated work lives only under `script/elevated/` and is allowlisted by name; it
 features stage prints after a failure (ADR-010). With the MSIX PowerShell these files may be virtualised under `%LOCALAPPDATA%\Packages\Microsoft.PowerShell_8wekyb3d8bbwe\LocalCache\Local\setup-dev-win\`. To find where they landed: `Get-ChildItem $env:LOCALAPPDATA -Recurse -Filter state.json -ErrorAction SilentlyContinue | Select-Object FullName`.
 
 UAC prompts on a first run, by source: the Git installer (README step 2, before this
-repository runs); `Enable-Features.ps1` (the only elevation this repository performs,
+repository runs); app installers that need admin, through winget (the apps stage never
+elevates); `Enable-Features.ps1` (the only elevation this repository performs,
 through `script/elevated/`, which enables features with the native `dism.exe`, not
 the DISM cmdlets that fail in MSIX pwsh, ADR-017, and in the same elevated run installs
 and updates the WSL package with `wsl.exe`, which no longer elevates itself, ADR-018). The PowerShell install is the per-user MSIX package and
@@ -87,8 +98,8 @@ territory (spec 5.1).
 | Network exposure verify: Windows listeners, portproxy, Hyper-V firewall | win |
 | Network exposure verify: Linux listeners, Docker binds | linux |
 
-Milestone 1 implements the rows for features, `.wslconfig` and the distro; the other
-`win` rows are planned (`TASKS.md`).
+Milestone 1 implements the rows for features, `.wslconfig` and the distro; W3 adds the
+winget apps and the font; the other `win` rows are planned (`TASKS.md`).
 
 ## The gate
 

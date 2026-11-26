@@ -6,10 +6,12 @@
     Thin entry point: the logic is Invoke-SetupRun in script\lib\Runner.psm1.
     Exit code: 0 done, 3010 reboot required, 1 failure.
 .PARAMETER Profiles
-    Comma-separated profiles (core, lab). core is always included. Persisted:
-    a later run without -Profiles uses the last value given (default core).
+    Comma-separated profiles: core, dev, security, productivity, backup,
+    productivity-extra, local-llm, lab. core is always included. Default:
+    core,dev,security,productivity. Persisted: a later run without -Profiles uses
+    the last value given, and a persisted value wins over the default.
 .PARAMETER Stage
-    Run only this stage (preflight, features, dotfiles, wsl, verify).
+    Run only this stage (preflight, features, apps, dotfiles, wsl, verify).
 .PARAMETER Plan
     Show what would change; change and record nothing.
 .PARAMETER LinuxRepoUrl
@@ -26,7 +28,7 @@
 [CmdletBinding()]
 param(
     [string]$Profiles,
-    [ValidateSet('preflight', 'features', 'dotfiles', 'wsl', 'verify')][string]$Stage,
+    [ValidateSet('preflight', 'features', 'apps', 'dotfiles', 'wsl', 'verify')][string]$Stage,
     [switch]$Plan,
     [string]$LinuxRepoUrl,
     [string]$LinuxRef = 'main',

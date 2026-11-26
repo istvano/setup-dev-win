@@ -9,12 +9,13 @@ Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'State.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Detect.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Distro.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Apps.psm1') -Force
 foreach ($stageModule in Get-ChildItem -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'stages') -Filter '*.psm1') {
     Import-Module $stageModule.FullName -Force
 }
 
-$script:StageOrder = @('preflight', 'features', 'dotfiles', 'wsl', 'verify')
-$script:ValidProfiles = @('core', 'lab')
+$script:StageOrder = @('preflight', 'features', 'apps', 'dotfiles', 'wsl', 'verify')
+$script:ValidProfiles = Get-ValidProfiles
 # pwsh -File: the default shell is Windows PowerShell 5.1, which cannot run setup.ps1.
 $script:RebootMessage = 'Reboot, then run pwsh -File script\setup.ps1 again (or powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1).'
 # bootstrap.ps1 carries the same text; keep the two identical.
@@ -33,6 +34,8 @@ function ConvertTo-ProfileList {
     return [string[]]@('core') + @($requested | Where-Object { $_ -ne 'core' } | Select-Object -Unique)
 }
 
+$script:AppsContinueMessage = "Stage 'apps' failed; continuing with the remaining stages. Fix the listed apps and re-run pwsh -File script\setup.ps1 -Stage apps."
+
 function Invoke-SetupRun {
     <#
     .SYNOPSIS
@@ -44,11 +47,11 @@ function Invoke-SetupRun {
         Plan to every stage and records nothing.
         Profiles, DistroRoot and LinuxUser are operator choices kept in the state
         file (ADR-015): a flag given explicitly wins and is persisted; without the
-        flag the persisted value is used; without either, the default (core,
+        flag the persisted value is used; without either, the default (core,dev,security,productivity,
         D:\WSL, the Linux user derived by the wsl stage). -Plan reads them and
         persists nothing.
     .PARAMETER Profiles
-        Comma-separated profile list; core,lab are valid; core is always included.
+        Comma-separated profile list; the profiles in profiles\apps.psd1 are valid; core is always included.
     .PARAMETER Stage
         Run only this stage.
     .PARAMETER Plan
@@ -67,7 +70,7 @@ function Invoke-SetupRun {
     [OutputType([int])]
     param(
         [string]$Profiles,
-        [ValidateSet('preflight', 'features', 'dotfiles', 'wsl', 'verify')][string]$Stage,
+        [ValidateSet('preflight', 'features', 'apps', 'dotfiles', 'wsl', 'verify')][string]$Stage,
         [switch]$Plan,
         [string]$LinuxRepoUrl,
         [string]$LinuxRef = 'main',
@@ -81,7 +84,7 @@ function Invoke-SetupRun {
     }
     try {
         $bound = $PSBoundParameters
-        $profileText = Resolve-SetupSetting -Name 'profiles' -Value $Profiles -Explicit:($bound.ContainsKey('Profiles')) -Default 'core'
+        $profileText = Resolve-SetupSetting -Name 'profiles' -Value $Profiles -Explicit:($bound.ContainsKey('Profiles')) -Default (Get-DefaultProfileText)
         $profileList = ConvertTo-ProfileList -Profiles $profileText
         $root = Resolve-SetupSetting -Name 'distroRoot' -Value $DistroRoot -Explicit:($bound.ContainsKey('DistroRoot')) -Default 'D:\WSL'
         $user = Resolve-SetupSetting -Name 'linuxUser' -Value $LinuxUser -Explicit:($bound.ContainsKey('LinuxUser'))
@@ -119,10 +122,14 @@ function Invoke-SetupRun {
     $explicit = [bool]$Stage
     $stages = if ($explicit) { @($Stage) } else { $script:StageOrder }
 
+    # A failed apps stage is recorded and reported but does not stop the run: one
+    # package that cannot install must not block dotfiles, WSL and verify (ADR-022).
+    $appsFailed = $false
+
     foreach ($name in $stages) {
         if (-not $explicit -and -not $Plan) {
             $prior = Get-StageResult -Stage $name
-            if ($prior -eq 'done' -and $name -ne 'verify') {
+            if ($prior -eq 'done' -and $name -notin @('apps', 'verify')) {
                 Write-Info "Stage '$name' already done; skipping."
                 continue
             }
@@ -140,6 +147,11 @@ function Invoke-SetupRun {
         catch {
             Write-Warn "Stage '$name' failed: $($_.Exception.Message)"
             if (-not $Plan) { Set-StageResult -Stage $name -Result 'failed' }
+            if ($name -eq 'apps') {
+                Write-Warn $script:AppsContinueMessage
+                $appsFailed = $true
+                continue
+            }
             return 1
         }
 
@@ -157,10 +169,16 @@ function Invoke-SetupRun {
             default {
                 Write-Warn "Stage '$name' failed (returned '$result')."
                 if (-not $Plan) { Set-StageResult -Stage $name -Result 'failed' }
+                if ($name -eq 'apps') {
+                    Write-Warn $script:AppsContinueMessage
+                    $appsFailed = $true
+                    continue
+                }
                 return 1
             }
         }
     }
+    if ($appsFailed) { return 1 }
     return 0
 }
 

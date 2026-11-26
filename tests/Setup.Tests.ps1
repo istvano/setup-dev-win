@@ -17,7 +17,7 @@ Describe 'Invoke-SetupRun' {
         Mock -ModuleName State Get-CimInstance { [pscustomobject]@{ LastBootUpTime = $script:Boot } }
         Mock -ModuleName Runner Test-IsElevated { $false }
         Mock -ModuleName Runner Get-EditionInfo { @{ Edition = 'Professional'; IsHome = $false; IsPro = $true } }
-        foreach ($n in 'Preflight', 'Features', 'Dotfiles', 'Wsl', 'Verify') {
+        foreach ($n in 'Preflight', 'Features', 'Apps', 'Dotfiles', 'Wsl', 'Verify') {
             Mock -ModuleName Runner "Invoke-${n}Stage" { 'done' }
         }
         Mock -ModuleName Runner Write-Warn { $script:Warned += $Message }
@@ -40,11 +40,11 @@ Describe 'Invoke-SetupRun' {
 
     It 'runs stages in order and exits 0' {
         $log = [System.Collections.Generic.List[string]]::new()
-        foreach ($n in 'Preflight', 'Features', 'Dotfiles', 'Wsl', 'Verify') {
+        foreach ($n in 'Preflight', 'Features', 'Apps', 'Dotfiles', 'Wsl', 'Verify') {
             Mock -ModuleName Runner "Invoke-${n}Stage" { $log.Add($n); 'done' }.GetNewClosure()
         }
         Invoke-SetupRun | Should-Be 0
-        ($log -join ',') | Should-Be 'Preflight,Features,Dotfiles,Wsl,Verify'
+        ($log -join ',') | Should-Be 'Preflight,Features,Apps,Dotfiles,Wsl,Verify'
         Get-StageResult -Stage 'wsl' | Should-Be 'done'
     }
 
@@ -106,12 +106,26 @@ Describe 'Invoke-SetupRun' {
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-DotfilesStage
     }
 
-    It 'a second complete run invokes only verify' {
+    It 'a second complete run invokes only apps and verify' {
         Invoke-SetupRun | Should-Be 0
         Invoke-SetupRun | Should-Be 0
+        Should-Invoke -ModuleName Runner -CommandName Invoke-AppsStage -Times 2 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-PreflightStage -Times 1 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-WslStage -Times 1 -Exactly
         Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 2 -Exactly
+    }
+
+    It 'apps runs on every pass even when recorded done, so a newly added profile installs' {
+        Set-StageResult -Stage 'apps' -Result 'done'
+        Invoke-SetupRun | Should-Be 0
+        Should-Invoke -ModuleName Runner -CommandName Invoke-AppsStage -Times 1 -Exactly
+    }
+
+    It '-Stage apps runs only apps' {
+        Invoke-SetupRun -Stage 'apps' | Should-Be 0
+        Should-Invoke -ModuleName Runner -CommandName Invoke-AppsStage -Times 1 -Exactly
+        Should-NotInvoke -ModuleName Runner -CommandName Invoke-FeaturesStage
+        Should-NotInvoke -ModuleName Runner -CommandName Invoke-VerifyStage
     }
 
     It '-Stage features runs only features, ignoring recorded state' {
@@ -138,6 +152,39 @@ Describe 'Invoke-SetupRun' {
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-WslStage
     }
 
+    It 'a failed apps stage does not stop the run: later stages run, apps is recorded failed, exit 1' {
+        Mock -ModuleName Runner Invoke-AppsStage { 'failed' }
+        Invoke-SetupRun | Should-Be 1
+        Get-StageResult -Stage 'apps' | Should-Be 'failed'
+        Should-Invoke -ModuleName Runner -CommandName Invoke-DotfilesStage -Times 1 -Exactly
+        Should-Invoke -ModuleName Runner -CommandName Invoke-WslStage -Times 1 -Exactly
+        Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 1 -Exactly
+        ($script:Warned -join ' ') | Should-BeLikeString -Expected "*Stage 'apps' failed; continuing with the remaining stages. Fix the listed apps and re-run pwsh -File script\setup.ps1 -Stage apps.*"
+    }
+
+    It 'a throwing apps stage also continues and exits 1' {
+        Mock -ModuleName Runner Invoke-AppsStage { throw 'boom' }
+        Invoke-SetupRun | Should-Be 1
+        Get-StageResult -Stage 'apps' | Should-Be 'failed'
+        Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 1 -Exactly
+    }
+
+    It 'a failed apps stage then a later reboot-required exits 3010' {
+        Mock -ModuleName Runner Invoke-AppsStage { 'failed' }
+        Mock -ModuleName Runner Invoke-WslStage { 'reboot-required' }
+        Invoke-SetupRun | Should-Be 3010
+        Get-StageResult -Stage 'apps' | Should-Be 'failed'
+        Should-NotInvoke -ModuleName Runner -CommandName Invoke-VerifyStage
+    }
+
+    It 'a failed apps stage in -Plan records nothing and still exits 1' {
+        Mock -ModuleName Runner Set-StageResult { }
+        Mock -ModuleName Runner Invoke-AppsStage { 'failed' }
+        Invoke-SetupRun -Plan | Should-Be 1
+        Should-NotInvoke -ModuleName Runner -CommandName Set-StageResult
+        Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 1 -Exactly
+    }
+
     It 'counts an unexpected return value as failed' {
         Mock -ModuleName Runner Invoke-FeaturesStage { 'banana' }
         Invoke-SetupRun | Should-Be 1
@@ -150,19 +197,19 @@ Describe 'Invoke-SetupRun' {
         Should-Invoke -ModuleName Runner -CommandName Invoke-FeaturesStage -Times 1 -Exactly
     }
 
-    It 'rejects -Profiles productivity' {
-        Invoke-SetupRun -Profiles 'productivity' | Should-Be 1
-        ($script:Warned -join ' ') | Should-BeLikeString -Expected '*productivity*'
+    It 'rejects an unknown profile' {
+        Invoke-SetupRun -Profiles 'nope' | Should-Be 1
+        ($script:Warned -join ' ') | Should-BeLikeString -Expected '*nope*'
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-PreflightStage
     }
 
     It 'first run with no flags uses and persists the defaults; LinuxUser stays unset' {
         Mock -ModuleName Runner Invoke-FeaturesStage { $script:Ctx = $Context; 'done' }
         Invoke-SetupRun | Should-Be 0
-        ($script:Ctx.Profiles -join ',') | Should-Be 'core'
+        ($script:Ctx.Profiles -join ',') | Should-Be 'core,dev,security,productivity'
         $script:Ctx.DistroRoot | Should-Be 'D:\WSL'
         $script:Ctx.LinuxUser | Should-BeFalsy
-        Get-SetupSetting -Name 'profiles' | Should-Be 'core'
+        Get-SetupSetting -Name 'profiles' | Should-Be 'core,dev,security,productivity'
         Get-SetupSetting -Name 'distroRoot' | Should-Be 'D:\WSL'
         Get-SetupSetting -Name 'linuxUser' | Should-BeNull
     }
