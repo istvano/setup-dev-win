@@ -9,6 +9,7 @@ Import-Module (Join-Path $libRoot 'Detect.psm1') -Force
 Import-Module (Join-Path $libRoot 'WindowsFeatures.psm1') -Force
 Import-Module (Join-Path $libRoot 'WslConfig.psm1') -Force
 Import-Module (Join-Path $libRoot 'Distro.psm1') -Force
+Import-Module (Join-Path $libRoot 'Apps.psm1') -Force
 # No -Force: share the State instance the runner (or verify.ps1) loaded.
 Import-Module (Join-Path $libRoot 'State.psm1')
 
@@ -197,7 +198,7 @@ function Invoke-VerifyCommand {
         [string]$LinuxUser
     )
     $bound = $PSBoundParameters
-    $profileText = Resolve-SetupSetting -Name 'profiles' -Value $Profiles -Explicit:($bound.ContainsKey('Profiles')) -Default 'core'
+    $profileText = Resolve-SetupSetting -Name 'profiles' -Value $Profiles -Explicit:($bound.ContainsKey('Profiles')) -Default (Get-DefaultProfileText)
     $profileList = @($profileText -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
     if ('core' -notin $profileList) { $profileList = @('core') + $profileList }
     $context = @{

@@ -9,8 +9,10 @@
 .PARAMETER DistroRoot
     Root directory for WSL distributions (default: the value setup.ps1 persisted, else D:\WSL).
 .PARAMETER Profiles
-    Comma-separated profiles (core, lab). Decides whether Hyper-V is expected
-    (default: the value setup.ps1 persisted, else core).
+    Comma-separated profiles (core, dev, security, productivity, backup,
+    productivity-extra, local-llm, lab). Decides whether Hyper-V is expected
+    (default: the value setup.ps1 persisted, which wins over the default
+    core,dev,security,productivity).
 .PARAMETER LinuxUser
     The expected default user of dev (default: the value setup.ps1 persisted,
     else derived from the Windows user name).

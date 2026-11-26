@@ -150,19 +150,19 @@ Describe 'Invoke-SetupRun' {
         Should-Invoke -ModuleName Runner -CommandName Invoke-FeaturesStage -Times 1 -Exactly
     }
 
-    It 'rejects -Profiles productivity' {
-        Invoke-SetupRun -Profiles 'productivity' | Should-Be 1
-        ($script:Warned -join ' ') | Should-BeLikeString -Expected '*productivity*'
+    It 'rejects an unknown profile' {
+        Invoke-SetupRun -Profiles 'nope' | Should-Be 1
+        ($script:Warned -join ' ') | Should-BeLikeString -Expected '*nope*'
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-PreflightStage
     }
 
     It 'first run with no flags uses and persists the defaults; LinuxUser stays unset' {
         Mock -ModuleName Runner Invoke-FeaturesStage { $script:Ctx = $Context; 'done' }
         Invoke-SetupRun | Should-Be 0
-        ($script:Ctx.Profiles -join ',') | Should-Be 'core'
+        ($script:Ctx.Profiles -join ',') | Should-Be 'core,dev,security,productivity'
         $script:Ctx.DistroRoot | Should-Be 'D:\WSL'
         $script:Ctx.LinuxUser | Should-BeFalsy
-        Get-SetupSetting -Name 'profiles' | Should-Be 'core'
+        Get-SetupSetting -Name 'profiles' | Should-Be 'core,dev,security,productivity'
         Get-SetupSetting -Name 'distroRoot' | Should-Be 'D:\WSL'
         Get-SetupSetting -Name 'linuxUser' | Should-BeNull
     }

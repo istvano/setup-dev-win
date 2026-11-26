@@ -212,7 +212,7 @@ Describe 'Invoke-VerifyCommand (script/verify.ps1)' {
 
     It 'uses the defaults when nothing is persisted and no flag is given' {
         Invoke-VerifyCommand | Should-Be 0
-        ($script:VerifyCtx.Profiles -join ',') | Should-Be 'core'
+        ($script:VerifyCtx.Profiles -join ',') | Should-Be 'core,dev,security,productivity'
         $script:VerifyCtx.DistroRoot | Should-Be 'D:\WSL'
         $script:VerifyCtx.LinuxUser | Should-BeFalsy
         Test-Path -LiteralPath $env:SETUP_DEV_WIN_STATE | Should-BeFalse

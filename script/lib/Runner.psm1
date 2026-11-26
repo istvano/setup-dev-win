@@ -9,12 +9,13 @@ Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'State.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Detect.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Distro.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Apps.psm1') -Force
 foreach ($stageModule in Get-ChildItem -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'stages') -Filter '*.psm1') {
     Import-Module $stageModule.FullName -Force
 }
 
 $script:StageOrder = @('preflight', 'features', 'dotfiles', 'wsl', 'verify')
-$script:ValidProfiles = @('core', 'lab')
+$script:ValidProfiles = Get-ValidProfiles
 # pwsh -File: the default shell is Windows PowerShell 5.1, which cannot run setup.ps1.
 $script:RebootMessage = 'Reboot, then run pwsh -File script\setup.ps1 again (or powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1).'
 # bootstrap.ps1 carries the same text; keep the two identical.
@@ -44,11 +45,11 @@ function Invoke-SetupRun {
         Plan to every stage and records nothing.
         Profiles, DistroRoot and LinuxUser are operator choices kept in the state
         file (ADR-015): a flag given explicitly wins and is persisted; without the
-        flag the persisted value is used; without either, the default (core,
+        flag the persisted value is used; without either, the default (core,dev,security,productivity,
         D:\WSL, the Linux user derived by the wsl stage). -Plan reads them and
         persists nothing.
     .PARAMETER Profiles
-        Comma-separated profile list; core,lab are valid; core is always included.
+        Comma-separated profile list; the profiles in profiles\apps.psd1 are valid; core is always included.
     .PARAMETER Stage
         Run only this stage.
     .PARAMETER Plan
@@ -81,7 +82,7 @@ function Invoke-SetupRun {
     }
     try {
         $bound = $PSBoundParameters
-        $profileText = Resolve-SetupSetting -Name 'profiles' -Value $Profiles -Explicit:($bound.ContainsKey('Profiles')) -Default 'core'
+        $profileText = Resolve-SetupSetting -Name 'profiles' -Value $Profiles -Explicit:($bound.ContainsKey('Profiles')) -Default (Get-DefaultProfileText)
         $profileList = ConvertTo-ProfileList -Profiles $profileText
         $root = Resolve-SetupSetting -Name 'distroRoot' -Value $DistroRoot -Explicit:($bound.ContainsKey('DistroRoot')) -Default 'D:\WSL'
         $user = Resolve-SetupSetting -Name 'linuxUser' -Value $LinuxUser -Explicit:($bound.ContainsKey('LinuxUser'))
