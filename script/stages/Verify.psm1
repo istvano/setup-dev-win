@@ -10,6 +10,7 @@ Import-Module (Join-Path $libRoot 'WindowsFeatures.psm1') -Force
 Import-Module (Join-Path $libRoot 'WslConfig.psm1') -Force
 Import-Module (Join-Path $libRoot 'Distro.psm1') -Force
 Import-Module (Join-Path $libRoot 'Apps.psm1') -Force
+Import-Module (Join-Path $libRoot 'Winget.psm1') -Force
 # No -Force: share the State instance the runner (or verify.ps1) loaded.
 Import-Module (Join-Path $libRoot 'State.psm1')
 
@@ -48,7 +49,7 @@ function Invoke-VerifyChecks {
     .DESCRIPTION
         Shared by the verify stage and script/verify.ps1. Each check prints
         "OK <name>" or "FAIL <name>: <reason>"; a failure never stops the later
-        checks. Check 7 (Kernel DMA Protection, systemd state) is informational and
+        checks. The informational block (Kernel DMA Protection, systemd state, app drift) is informational and
         returns nothing. Read-only: nothing is modified.
     .PARAMETER Context
         Run context: Profiles, DistroRoot, LinuxUser (derived when empty), Edition
@@ -118,6 +119,15 @@ function Invoke-VerifyChecks {
                 Write-Host "     registry DefaultUid: $($record.DefaultUid)"
             }))
 
+    # 5b. Every package of the selected profiles is installed (winget exit code, never the table).
+    $results.Add((Invoke-VerifyCheck -Name 'Apps' -Check {
+                $missing = [System.Collections.Generic.List[string]]::new()
+                foreach ($app in @(Get-AppPackages -Profiles $profiles)) {
+                    if (-not (Test-WingetPackage -Id $app.Id)) { $missing.Add("$($app.Name) ($($app.Id))") }
+                }
+                if ($missing.Count -gt 0) { "missing $($missing -join ', '); run pwsh -File script\setup.ps1 -Stage apps." }
+            }))
+
     # 6. The Linux repository's own verify, run as the default user; output streams to the host.
     $results.Add((Invoke-VerifyCheck -Name 'Linux verify' -Check {
                 if ($null -eq $record) { return 'distro dev is not registered.' }
@@ -141,6 +151,22 @@ function Invoke-VerifyChecks {
     }
     catch { Write-Host "INFO systemd in dev: unreadable ($($_.Exception.Message))" }
 
+    # Drift: installed but declared in no profile (any profile, so an opt-in app is not undeclared)
+    # and not Windows/winget infrastructure. Informational; nothing is uninstalled.
+    try {
+        $catalog = Get-AppCatalog
+        $declared = @($catalog.Profiles.Values | ForEach-Object { $_ } | ForEach-Object { [string]$_.Id })
+        $allowPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'profiles/drift-allowlist.psd1'
+        $patterns = @((Import-PowerShellDataFile -LiteralPath $allowPath).Patterns)
+        $extra = @(Get-WingetInstalledIds | Where-Object {
+                $id = $_
+                ($id -notin $declared) -and -not ($patterns | Where-Object { $id -like $_ })
+            } | Sort-Object -Unique)
+        if ($extra.Count -eq 0) { Write-Host 'INFO apps not in any profile: none' }
+        else { Write-Host "INFO apps not in any profile ($($extra.Count)): $($extra -join ', ')" }
+    }
+    catch { Write-Host "INFO apps not in any profile: unreadable ($($_.Exception.Message))" }
+
     return $results.ToArray()
 }
 
@@ -162,7 +188,7 @@ function Invoke-VerifyStage {
         [switch]$Plan
     )
     if ($Plan) {
-        Write-Info 'Would check: OS build, features, WSL version, chezmoi drift, the dev distro, the Linux verify (read-only).'
+        Write-Info 'Would check: OS build, features, WSL version, chezmoi drift, installed apps, the dev distro, the Linux verify (read-only).'
         return 'done'
     }
     $results = @(Invoke-VerifyChecks -Context $Context)

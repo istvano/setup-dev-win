@@ -39,13 +39,22 @@ Describe 'Invoke-VerifyChecks' {
             [pscustomobject]@{ ExitCode = $script:LinuxExit; Output = @('linux verify line') }
         }
         Mock -ModuleName Verify Get-KernelDmaProtectionState { 'on' }
+        $script:Missing = @()
+        Mock -ModuleName Verify Test-WingetPackage { $Id -notin $script:Missing }
+        $script:Installed = @('Git.Git')
+        $script:ExportFails = $false
+        Mock -ModuleName Verify Get-WingetInstalledIds {
+            if ($script:ExportFails) { throw 'winget export failed' }
+            $script:Installed
+        }
     }
 
     It 'passes every check on a healthy machine' {
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
-        $r.Count | Should-Be 6
+        $r.Count | Should-Be 7
         @($r | Where-Object { -not $_.Ok }).Count | Should-Be 0
-        ($script:Lines | Where-Object { $_ -like 'OK *' }).Count | Should-Be 6
+        ($script:Lines | Where-Object { $_ -like 'OK *' }).Count | Should-Be 7
+        (Test-Line 'OK Apps') | Should-BeTrue
         (Test-Line '*linux verify line*') | Should-BeTrue
     }
 
@@ -157,6 +166,55 @@ Describe 'Invoke-VerifyChecks' {
             $FilePath -eq 'wsl.exe' -and ($ArgumentList -join ' ') -eq '-d dev -- bash -lc $HOME/workspace/setup-dev-linux-wsl/script/verify' }
     }
 
+    It 'Apps: two missing packages fail naming each with the fix' {
+        $script:Missing = @('Git.Git', 'twpayne.chezmoi')
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
+        (Test-Line 'FAIL Apps: missing Git (Git.Git), chezmoi (twpayne.chezmoi); run pwsh -File script\setup.ps1 -Stage apps.') | Should-BeTrue
+    }
+
+    It 'Apps: checks only the selected profiles' {
+        $null = Invoke-VerifyChecks -Context (New-Ctx -Profiles @('core'))
+        Should-NotInvoke -CommandName Test-WingetPackage -ModuleName Verify -ParameterFilter { $Id -eq 'Google.Chrome' }
+        Should-Invoke -CommandName Test-WingetPackage -ModuleName Verify -ParameterFilter { $Id -eq 'Git.Git' }
+    }
+
+    It 'Apps: a winget error in one package fails the check, not the run' {
+        Mock -ModuleName Verify Test-WingetPackage { throw "winget list failed for $Id" }
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        ($r | Where-Object Name -EQ 'Apps').Ok | Should-BeFalse
+        $r.Count | Should-Be 7
+    }
+
+    It 'drift: lists installed ids in no profile, minus the allowlist, case-insensitively' {
+        $script:Installed = @('Git.Git', 'google.chrome', 'Foo.Bar', 'Microsoft.VCLibs.140.00.UWPDesktop', 'Microsoft.AppInstaller', 'Zed.Other')
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        @($r | Where-Object { -not $_.Ok }).Count | Should-Be 0
+        (Test-Line 'INFO apps not in any profile (2): Foo.Bar, Zed.Other') | Should-BeTrue
+    }
+
+    It 'drift: none when everything is declared or allowlisted' {
+        $script:Installed = @('Git.Git', 'Microsoft.Edge')
+        $null = Invoke-VerifyChecks -Context (New-Ctx)
+        (Test-Line 'INFO apps not in any profile: none') | Should-BeTrue
+    }
+
+    It 'drift: an export failure is informational and never fails verify' {
+        $script:ExportFails = $true
+        $r = @(Invoke-VerifyChecks -Context (New-Ctx))
+        @($r | Where-Object { -not $_.Ok }).Count | Should-Be 0
+        (Test-Line 'INFO apps not in any profile: unreadable (winget export failed)') | Should-BeTrue
+    }
+
+    It 'the drift allowlist holds the Windows and winget infrastructure patterns' {
+        $allow = Import-PowerShellDataFile (Join-Path $script:Root 'profiles/drift-allowlist.psd1')
+        foreach ($p in 'Microsoft.AppInstaller', 'Microsoft.UI.Xaml.*', 'Microsoft.VCLibs.*', 'Microsoft.VCRedist.*',
+            'Microsoft.WindowsAppRuntime.*', 'Microsoft.DotNet.*', 'Microsoft.Edge', 'Microsoft.EdgeWebView2Runtime',
+            'Microsoft.OneDrive', 'Microsoft.WSL', 'Microsoft.DSC') {
+            $allow.Patterns | Should-ContainCollection $p
+        }
+    }
+
     It 'check 7 is informational: degraded or an odd state never fails' {
         foreach ($state in 'degraded', 'starting') {
             $script:SystemdState = $state
@@ -172,7 +230,7 @@ Describe 'Invoke-VerifyChecks' {
         $script:Chezmoi = @{ Ok = $false; Output = @('x') }
         $script:LinuxExit = 1
         $r = @(Invoke-VerifyChecks -Context (New-Ctx))
-        $r.Count | Should-Be 6
+        $r.Count | Should-Be 7
         @($r | Where-Object { -not $_.Ok }).Count | Should-Be 3
     }
 }
@@ -194,6 +252,13 @@ Describe 'Invoke-VerifyStage' {
     It 'with -Plan runs no checks' {
         Mock -ModuleName Verify Invoke-VerifyChecks { throw 'no' }
         Invoke-VerifyStage -Context (New-Ctx) -Plan | Should-Be 'done'
+    }
+    It 'the plan text lists the apps check' {
+        $script:Plan = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName Verify Write-Info { $script:Plan.Add([string]$Message) }
+        Mock -ModuleName Verify Invoke-VerifyChecks { throw 'no' }
+        $null = Invoke-VerifyStage -Context (New-Ctx) -Plan
+        (($script:Plan -join ' ') -like '*installed apps*') | Should-BeTrue
     }
 }
 
