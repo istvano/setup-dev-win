@@ -1,7 +1,7 @@
 # Tasks
 
 Unfinished work only. Phase names follow the spec (section 9); phase W0 (this
-skeleton and the gate) and phases W1-W2 (milestone 1) and the W3 code are implemented. "Phase Wn" is a
+skeleton and the gate) and phases W1-W2 (milestone 1) the W3 and W4 code are implemented. "Phase Wn" is a
 spec phase, not a decision; decisions are the ADRs in `docs/DECISIONS.md`.
 
 - [ ] Milestone 1 acceptance leftovers, checked only in CI so far: the `-DistroRoot`
@@ -11,8 +11,9 @@ spec phase, not a decision; decisions are the ADRs in `docs/DECISIONS.md`.
 - [ ] Phase W3 acceptance: the code, ADR-020 to ADR-022 and the runbook are done; run
       the "W3 acceptance" checklist in `docs/OPERATIONS.md` on a machine that already
       has Chrome and Firefox installed by hand.
-- [ ] Phase W4: Windows-side chezmoi: Terminal (`modify_`), PowerShell profile, VS Code
-      and Zed settings. Done when Terminal opens `dev` with the font and posture.
+- [ ] Phase W4 acceptance: the code, ADR-024, ADR-025 and the runbook are done; run the
+      "W4 acceptance" checklist in `docs/OPERATIONS.md` on hardware, then set the values
+      under "Manual settings". Done when Terminal opens `dev` with the font and posture.
 - [ ] Phase W5: Windows defaults, hardening apply and check, network exposure checks.
       Done when `hardening-check -Strict` passes.
 - [ ] Phase W6: Hyper-V test harness and lab VM (Pro). Done when the full bootstrap
