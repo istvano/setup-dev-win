@@ -36,7 +36,9 @@ function Invoke-AppsStage {
     $csv = $profiles -join ','
     # First line, always: a state.json that persisted profiles from an earlier run
     # would otherwise leave the operator wondering why an app is missing.
-    Write-Info "Profiles: $csv (change with pwsh -File script\setup.ps1 -Profiles $csv)"
+    $default = Get-DefaultProfileText
+    $available = (Get-ValidProfiles) -join ','
+    Write-Info "Profiles: $csv (default $default; available $available; change with pwsh -File script\setup.ps1 -Profiles <list>)"
 
     $packages = @(Get-AppPackages -Profiles $profiles)
     $failures = [System.Collections.Generic.List[string]]::new()
@@ -50,6 +52,7 @@ function Invoke-AppsStage {
             $installed = Test-WingetPackage -Id $id
         }
         catch {
+            if ($Plan) { Write-Warn "Could not check ${id}: $($_.Exception.Message)" }
             $failures.Add("$id ($($_.Exception.Message))")
             continue
         }
@@ -62,7 +65,7 @@ function Invoke-AppsStage {
             Write-Info "Would install $name ($id)"
             continue
         }
-        Write-Info "Installing $name ($id)..."
+        Write-Info "Installing $name ($id)... A UAC prompt may appear; check the taskbar if nothing happens."
         try {
             $install = @{ Id = $id }
             if ($package.ContainsKey('Scope') -and $package.Scope) { $install.Scope = $package.Scope }
@@ -73,7 +76,15 @@ function Invoke-AppsStage {
             continue
         }
         switch ($outcome) {
-            'installed' { Write-Ok "Installed $name" }
+            'installed' {
+                Write-Ok "Installed $name"
+                # Backstop: an installer winget cannot correlate would be reinstalled next run.
+                $listed = $false
+                try { $listed = Test-WingetPackage -Id $id } catch { $listed = $false }
+                if (-not $listed) {
+                    Write-Warn "$name ($id) installed but winget does not report it installed; a re-run may reinstall it."
+                }
+            }
             'already-installed' { Write-Ok "Adopted $name (already installed outside winget)" }
             'reboot-required' { Write-Ok "Installed $name (restart required)"; $rebootNeeded = $true }
             default { $failures.Add("$id (unexpected install outcome '$outcome')") }
@@ -100,6 +111,7 @@ function Invoke-AppsStage {
 
     if ($Plan) {
         Write-Info "Already installed: $already"
+        if ($failures.Count -gt 0) { return 'failed' }
         return 'done'
     }
     if ($failures.Count -gt 0) {

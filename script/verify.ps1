@@ -1,7 +1,7 @@
 #Requires -Version 7.6
 <#
 .SYNOPSIS
-    Verifies the milestone-1 result: OS, features, WSL, .wslconfig, the dev distro.
+    Verifies the setup: OS, features, WSL, .wslconfig, the dev distro and the selected apps.
 .DESCRIPTION
     Runs the same checks as the verify stage, with no runner. It reads the
     choices setup.ps1 persisted in the state file and writes nothing.

@@ -11,7 +11,7 @@
             @{ Id = 'Microsoft.WindowsTerminal'; Name = 'Windows Terminal' }
             @{ Id = 'Microsoft.PowerShell'; Name = 'PowerShell' }
             @{ Id = 'Git.Git'; Name = 'Git' }
-            @{ Id = 'twpayne.chezmoi'; Name = 'chezmoi' }
+            @{ Id = 'twpayne.chezmoi'; Name = 'chezmoi'; Scope = 'user' }
         )
         dev = @(
             @{ Id = 'Microsoft.VisualStudioCode'; Name = 'Visual Studio Code' }

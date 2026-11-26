@@ -51,6 +51,11 @@ Describe 'catalogue' {
     ) {
         @(Get-AppPackages -Profiles @($Profile) | ForEach-Object { $_.Id }) | Should-BeCollection $Ids
     }
+    It 'only chezmoi carries a Scope (user, as WslConfig installs it)' {
+        $scoped = @(Get-AppPackages -Profiles (Get-ValidProfiles) | Where-Object { $_.ContainsKey('Scope') })
+        @($scoped | ForEach-Object { $_.Id }) | Should-BeCollection @('twpayne.chezmoi')
+        $scoped[0].Scope | Should-Be 'user'
+    }
     It 'Firefox is the release channel and browsers carry no Scope' {
         $ids = @(Get-AppPackages -Profiles (Get-ValidProfiles) | ForEach-Object { $_.Id })
         $ids -contains 'Mozilla.Firefox' | Should-BeTrue

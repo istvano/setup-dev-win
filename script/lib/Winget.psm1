@@ -18,6 +18,9 @@ $script:RebootRequiredCode = -1978334967
 $script:FailureReasons = @{
     -1978334966 = 'Windows must restart before this can install. Please restart Windows, then re-run the setup.'
     -1978334964 = 'The install was cancelled, usually because the UAC prompt was declined. Re-run the setup and accept the UAC prompt.'
+    # 0x800704C7 ERROR_CANCELLED: an exe installer that elevates itself and was declined.
+    -2147023673 = 'The install was cancelled, usually because the UAC prompt was declined. Re-run the setup and accept the UAC prompt.'
+    -1978335212 = 'There is no package with this Id in the winget source. Check the Id in profiles\apps.psd1.'
     -1978335215 = 'The installer hash did not match the catalogue, so winget refused it. Nothing was installed; try again later.'
     -1978335174 = 'The install is blocked by a policy on this machine.'
     -1978334961 = 'The install is blocked by a policy on this machine.'

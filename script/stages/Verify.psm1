@@ -46,12 +46,12 @@ function Invoke-VerifyCheck {
 function Invoke-VerifyChecks {
     <#
     .SYNOPSIS
-        Runs the milestone-1 verification checks and returns one result per check.
+        Runs the verification checks (OS, features, WSL, .wslconfig, distro, apps) and returns one result per check.
     .DESCRIPTION
         Shared by the verify stage and script/verify.ps1. Each check prints
         "OK <name>" or "FAIL <name>: <reason>"; a failure never stops the later
-        checks. The informational block (Kernel DMA Protection, systemd state, app drift) is informational and
-        returns nothing. Read-only: nothing is modified.
+        checks. The informational block (Kernel DMA Protection, systemd state, app drift)
+        only prints and returns nothing. Read-only: nothing is modified.
     .PARAMETER Context
         Run context: Profiles, DistroRoot, LinuxUser (derived when empty), Edition
         (seeded from Get-EditionInfo when absent).
@@ -177,7 +177,7 @@ function Invoke-VerifyChecks {
 function Invoke-VerifyStage {
     <#
     .SYNOPSIS
-        The Verify stage: read-only checks of the whole milestone-1 result.
+        The Verify stage: read-only checks of the whole setup (host, WSL distro and apps).
     .PARAMETER Context
         Run context: Profiles, DistroRoot, LinuxRepoUrl, LinuxRef, Plan, Edition.
     .PARAMETER Plan

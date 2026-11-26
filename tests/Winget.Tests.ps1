@@ -73,13 +73,21 @@ Describe 'Install-WingetPackage' {
     It 'allows every mapped code through Invoke-Native' {
         Install-WingetPackage -Id 'Git.Git' | Out-Null
         Should-Invoke -CommandName Invoke-Native -ModuleName Winget -Exactly 1 -ParameterFilter {
-            $expected = @(-1978335189, -1978335135, -1978334963, -1978334967, -1978334966, -1978334964, -1978335215, -1978335174, -1978334961)
+            $expected = @(-1978335189, -1978335135, -1978334963, -1978334967, -1978334966, -1978334964, -2147023673, -1978335215, -1978335174, -1978334961)
             @($expected | Where-Object { $_ -notin $AllowExitCode }).Count -eq 0
         }
     }
     It 'exit -1978334964 throws naming the Id, code, cancellation and UAC' {
         $script:Code = -1978334964
         { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*-1978334964*cancelled*UAC*'
+    }
+    It 'exit -2147023673 (ERROR_CANCELLED from an elevating exe installer) is the same UAC cancellation' {
+        $script:Code = -2147023673
+        { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*-2147023673*cancelled*UAC*'
+    }
+    It 'exit -1978335212 on install says no package with this Id is in the winget source' {
+        $script:Code = -1978335212
+        { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*-1978335212*no package with this Id*winget source*'
     }
     It 'exit -1978335215 throws mentioning the hash' {
         $script:Code = -1978335215

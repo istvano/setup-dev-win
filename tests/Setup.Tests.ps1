@@ -152,6 +152,39 @@ Describe 'Invoke-SetupRun' {
         Should-NotInvoke -ModuleName Runner -CommandName Invoke-WslStage
     }
 
+    It 'a failed apps stage does not stop the run: later stages run, apps is recorded failed, exit 1' {
+        Mock -ModuleName Runner Invoke-AppsStage { 'failed' }
+        Invoke-SetupRun | Should-Be 1
+        Get-StageResult -Stage 'apps' | Should-Be 'failed'
+        Should-Invoke -ModuleName Runner -CommandName Invoke-DotfilesStage -Times 1 -Exactly
+        Should-Invoke -ModuleName Runner -CommandName Invoke-WslStage -Times 1 -Exactly
+        Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 1 -Exactly
+        ($script:Warned -join ' ') | Should-BeLikeString -Expected "*Stage 'apps' failed; continuing with the remaining stages. Fix the listed apps and re-run pwsh -File script\setup.ps1 -Stage apps.*"
+    }
+
+    It 'a throwing apps stage also continues and exits 1' {
+        Mock -ModuleName Runner Invoke-AppsStage { throw 'boom' }
+        Invoke-SetupRun | Should-Be 1
+        Get-StageResult -Stage 'apps' | Should-Be 'failed'
+        Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 1 -Exactly
+    }
+
+    It 'a failed apps stage then a later reboot-required exits 3010' {
+        Mock -ModuleName Runner Invoke-AppsStage { 'failed' }
+        Mock -ModuleName Runner Invoke-WslStage { 'reboot-required' }
+        Invoke-SetupRun | Should-Be 3010
+        Get-StageResult -Stage 'apps' | Should-Be 'failed'
+        Should-NotInvoke -ModuleName Runner -CommandName Invoke-VerifyStage
+    }
+
+    It 'a failed apps stage in -Plan records nothing and still exits 1' {
+        Mock -ModuleName Runner Set-StageResult { }
+        Mock -ModuleName Runner Invoke-AppsStage { 'failed' }
+        Invoke-SetupRun -Plan | Should-Be 1
+        Should-NotInvoke -ModuleName Runner -CommandName Set-StageResult
+        Should-Invoke -ModuleName Runner -CommandName Invoke-VerifyStage -Times 1 -Exactly
+    }
+
     It 'counts an unexpected return value as failed' {
         Mock -ModuleName Runner Invoke-FeaturesStage { 'banana' }
         Invoke-SetupRun | Should-Be 1

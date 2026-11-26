@@ -36,9 +36,11 @@ Describe 'Invoke-AppsStage' {
         Mock -ModuleName AppsStage Install-NerdFont { 'installed' }
     }
 
-    It 'prints the profiles line first, with how to change them' {
+    It 'prints the profiles line first, with the default, the available profiles and how to change them' {
         Invoke-AppsStage -Context (Get-TestContext -Profiles @('core', 'dev')) | Out-Null
-        $script:Infos[0] | Should-Be 'Profiles: core,dev (change with pwsh -File script\setup.ps1 -Profiles core,dev)'
+        $default = InModuleScope AppsStage { Get-DefaultProfileText }
+        $available = (InModuleScope AppsStage { Get-ValidProfiles }) -join ','
+        $script:Infos[0] | Should-Be "Profiles: core,dev (default $default; available $available; change with pwsh -File script\setup.ps1 -Profiles <list>)"
     }
 
     It 'reports an installed package and does not install it' {
@@ -50,7 +52,7 @@ Describe 'Invoke-AppsStage' {
 
     It 'announces then installs a missing package, passing the catalogue Scope' {
         Invoke-AppsStage -Context (Get-TestContext) | Should-Be 'done'
-        $script:Infos | Should-ContainCollection 'Installing One (A.One)...'
+        $script:Infos | Should-ContainCollection 'Installing One (A.One)... A UAC prompt may appear; check the taskbar if nothing happens.'
         Should-Invoke -ModuleName AppsStage -CommandName Install-WingetPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'A.One' -and -not $Scope }
         Should-Invoke -ModuleName AppsStage -CommandName Install-WingetPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'B.Two' -and $Scope -eq 'machine' }
     }
@@ -101,6 +103,31 @@ Describe 'Invoke-AppsStage' {
         $script:Infos | Should-ContainCollection 'Would install Two (B.Two)'
         $script:Infos | Should-ContainCollection 'Already installed: 1'
         Should-NotInvoke -ModuleName AppsStage -CommandName Install-WingetPackage
+    }
+
+    It 'warns when winget does not report a package installed right after installing it, without failing' {
+        Mock -ModuleName AppsStage Test-WingetPackage { $false }
+        Invoke-AppsStage -Context (Get-TestContext) | Should-Be 'done'
+        $script:Warns | Should-ContainCollection 'One (A.One) installed but winget does not report it installed; a re-run may reinstall it.'
+        Should-Invoke -ModuleName AppsStage -CommandName Test-WingetPackage -Times 4 -Exactly
+    }
+
+    It 'does not warn when the post-install check confirms the package' {
+        $script:Calls = @{}
+        Mock -ModuleName AppsStage Test-WingetPackage {
+            $n = 1 + $(if ($script:Calls.ContainsKey($Id)) { $script:Calls[$Id] } else { 0 })
+            $script:Calls[$Id] = $n
+            $n -gt 1
+        }
+        Invoke-AppsStage -Context (Get-TestContext) | Should-Be 'done'
+        $script:Warns.Count | Should-Be 0
+    }
+
+    It '-Plan prints detection failures as warnings and returns failed' {
+        Mock -ModuleName AppsStage Test-WingetPackage { if ($Id -eq 'A.One') { throw 'unexpected winget exit 5' } else { $false } }
+        Invoke-AppsStage -Context (Get-TestContext) -Plan | Should-Be 'failed'
+        $script:Warns | Should-ContainCollection 'Could not check A.One: unexpected winget exit 5'
+        $script:Infos | Should-ContainCollection 'Would install Two (B.Two)'
     }
 
     It 'asks the catalogue for the context profiles' {

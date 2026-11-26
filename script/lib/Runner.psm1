@@ -34,6 +34,8 @@ function ConvertTo-ProfileList {
     return [string[]]@('core') + @($requested | Where-Object { $_ -ne 'core' } | Select-Object -Unique)
 }
 
+$script:AppsContinueMessage = "Stage 'apps' failed; continuing with the remaining stages. Fix the listed apps and re-run pwsh -File script\setup.ps1 -Stage apps."
+
 function Invoke-SetupRun {
     <#
     .SYNOPSIS
@@ -120,6 +122,10 @@ function Invoke-SetupRun {
     $explicit = [bool]$Stage
     $stages = if ($explicit) { @($Stage) } else { $script:StageOrder }
 
+    # A failed apps stage is recorded and reported but does not stop the run: one
+    # package that cannot install must not block dotfiles, WSL and verify (ADR-022).
+    $appsFailed = $false
+
     foreach ($name in $stages) {
         if (-not $explicit -and -not $Plan) {
             $prior = Get-StageResult -Stage $name
@@ -141,6 +147,11 @@ function Invoke-SetupRun {
         catch {
             Write-Warn "Stage '$name' failed: $($_.Exception.Message)"
             if (-not $Plan) { Set-StageResult -Stage $name -Result 'failed' }
+            if ($name -eq 'apps') {
+                Write-Warn $script:AppsContinueMessage
+                $appsFailed = $true
+                continue
+            }
             return 1
         }
 
@@ -158,10 +169,16 @@ function Invoke-SetupRun {
             default {
                 Write-Warn "Stage '$name' failed (returned '$result')."
                 if (-not $Plan) { Set-StageResult -Stage $name -Result 'failed' }
+                if ($name -eq 'apps') {
+                    Write-Warn $script:AppsContinueMessage
+                    $appsFailed = $true
+                    continue
+                }
                 return 1
             }
         }
     }
+    if ($appsFailed) { return 1 }
     return 0
 }
 
