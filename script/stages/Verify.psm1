@@ -160,7 +160,11 @@ function Invoke-VerifyChecks {
     # and not Windows/winget infrastructure. Informational; nothing is uninstalled.
     try {
         $catalog = Get-AppCatalog
-        $declared = @($catalog.Profiles.Values | ForEach-Object { $_ } | ForEach-Object { [string]$_.Id })
+        # A Store entry's WingetId is the name winget export lists it under (ADR-023).
+        $declared = @($catalog.Profiles.Values | ForEach-Object { $_ } | ForEach-Object {
+                [string]$_.Id
+                if ($_.ContainsKey('WingetId') -and $_.WingetId) { [string]$_.WingetId }
+            })
         $allowPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'profiles/drift-allowlist.psd1'
         $patterns = @((Import-PowerShellDataFile -LiteralPath $allowPath).Patterns)
         $extra = @(Get-WingetInstalledIds | Where-Object {

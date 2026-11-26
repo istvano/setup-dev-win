@@ -215,6 +215,12 @@ Describe 'Invoke-VerifyChecks' {
         (Test-Line 'INFO apps not in any profile (2): Foo.Bar, Zed.Other') | Should-BeTrue
     }
 
+    It 'drift: a Store entry''s winget-source name (WingetId) counts as declared' {
+        $script:Installed = @('Git.Git', 'OpenAI.ChatGPT')
+        $null = Invoke-VerifyChecks -Context (New-Ctx)
+        (Test-Line 'INFO apps not in any profile: none') | Should-BeTrue
+    }
+
     It 'drift: none when everything is declared or allowlisted' {
         $script:Installed = @('Git.Git', 'Microsoft.Edge')
         $null = Invoke-VerifyChecks -Context (New-Ctx)

@@ -55,6 +55,13 @@ Describe 'catalogue' {
     ) {
         @(Get-AppPackages -Profiles @($Profile) | ForEach-Object { $_.Id }) | Should-BeCollection $Ids
     }
+    It 'every Store entry names the winget-source id it is exported under' {
+        $store = @(Get-AppPackages -Profiles (Get-ValidProfiles) | Where-Object { $_.ContainsKey('Source') -and $_.Source -eq 'msstore' })
+        $store.Count | Should-BeGreaterThan 0
+        foreach ($entry in $store) { $entry.ContainsKey('WingetId') | Should-BeTrue }
+        @($store | Where-Object Name -EQ 'ChatGPT')[0].WingetId | Should-Be 'OpenAI.ChatGPT'
+    }
+
     It 'only chezmoi carries a Scope (user, as WslConfig installs it)' {
         $scoped = @(Get-AppPackages -Profiles (Get-ValidProfiles) | Where-Object { $_.ContainsKey('Scope') })
         @($scoped | ForEach-Object { $_.Id }) | Should-BeCollection @('twpayne.chezmoi')

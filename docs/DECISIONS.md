@@ -481,7 +481,10 @@ deployment.
 A catalogue entry may therefore set `Source = 'msstore'`, with the Store product Id
 (12 upper-case letters and digits) as its `Id`. `Test-WingetPackage` and
 `Install-WingetPackage` take `-Source winget|msstore` (default winget), and the apps
-stage and verify pass the entry's source. Only ChatGPT uses it today. The winget
+stage and verify pass the entry's source. Only ChatGPT uses it today. A Store entry also
+sets `WingetId`, the community-source id `winget export` lists the installed app under
+(`OpenAI.ChatGPT`), so the drift line counts it as declared; the second hardware run
+showed that name in the drift line until this was added. The winget
 community source stays the default: it carries the installer hash in its manifest,
 while a Store install is validated by the Store. The drift line reads `winget export
 --source winget` only, so Store apps never appear in it.
