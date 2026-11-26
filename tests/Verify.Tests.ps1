@@ -154,7 +154,7 @@ Describe 'Invoke-VerifyChecks' {
         (Test-Line 'FAIL *Linux verify*exit code 1*') | Should-BeTrue
         (Test-Line '*linux verify line*') | Should-BeTrue
         Should-Invoke -CommandName Invoke-Native -ModuleName Verify -ParameterFilter {
-            $FilePath -eq 'wsl.exe' -and ($ArgumentList -join ' ') -eq '-d dev -- bash -lc ~/workspace/setup-dev-linux-wsl/script/verify' }
+            $FilePath -eq 'wsl.exe' -and ($ArgumentList -join ' ') -eq '-d dev -- bash -lc $HOME/workspace/setup-dev-linux-wsl/script/verify' }
     }
 
     It 'check 7 is informational: degraded or an odd state never fails' {

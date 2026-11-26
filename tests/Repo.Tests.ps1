@@ -143,6 +143,17 @@ Describe 'Workflows' {
     }
 }
 
+Describe 'Native argument invariants' {
+    It 'no string literal starts with ~ (PowerShell 7.5+ expands it to the Windows profile in native arguments)' {
+        $offenders = foreach ($file in $script:ScriptFiles) {
+            $relative = $file.FullName.Substring($script:Root.Length + 1) -replace '\\', '/'
+            if ($relative -like 'tests/*') { continue }
+            if ((Get-CodeLine -Path $file.FullName) -match '[''"]~') { $relative }
+        }
+        @($offenders) | Should-BeCollection @() -Because 'use $HOME inside the Linux command instead'
+    }
+}
+
 Describe 'Elevation invariants' {
     It 'dism.exe, the DISM cmdlets and policy cmdlets appear only under script/elevated' {
         $pattern = '\bdism\.exe\b|Enable-WindowsOptionalFeature|Disable-WindowsOptionalFeature|Get-WindowsOptionalFeature|Set-ExecutionPolicy\b.*-Scope[\s:]+LocalMachine|Set-ExecutionPolicy\b.*LocalMachine.*-Scope'

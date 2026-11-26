@@ -120,7 +120,10 @@ function Invoke-VerifyChecks {
     # 6. The Linux repository's own verify, run as the default user; output streams to the host.
     $results.Add((Invoke-VerifyCheck -Name 'Linux verify' -Check {
                 if ($null -eq $record) { return 'distro dev is not registered.' }
-                $linuxVerify = '~/workspace/setup-dev-linux-wsl/script/verify'
+                # $HOME, not ~: PowerShell 7.5+ expands a leading ~ in a native argument to
+                # the Windows profile path (C:\Users\<name>), which bash then mangles. The
+                # single quotes keep $HOME literal here; the shell inside dev expands it.
+                $linuxVerify = '$HOME/workspace/setup-dev-linux-wsl/script/verify'
                 $run = Invoke-Native -FilePath 'wsl.exe' -AllowExitCode (1..255) -ArgumentList @('-d', 'dev', '--', 'bash', '-lc', $linuxVerify)
                 foreach ($line in $run.Output) { Write-Host "     $line" }
                 if ($run.ExitCode -ne 0) { "setup-dev-linux-wsl verify failed (exit code $($run.ExitCode)); its output is above." }
