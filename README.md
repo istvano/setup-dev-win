@@ -7,8 +7,27 @@ the development environment inside the distro. It mirrors the operator's macOS
 repository `setup-dev-mac`.
 
 **Status:** milestone 1 (bootstrap to a working WSL distro) is implemented: stage-0,
-preflight, features, dotfiles (`.wslconfig`), wsl and verify. App profiles, Windows
+preflight, features, dotfiles (`.wslconfig`), wsl and verify. Phase W3 adds the apps
+stage (winget profiles and the Nerd Font); its hardware acceptance is open. Windows
 defaults and hardening are listed in `TASKS.md`.
+
+## Profiles
+
+Selected with `-Profiles` (comma-separated; `core` is always included) and remembered.
+Default: `core,dev,security,productivity`.
+
+| Profile | Default | Packages |
+|---|---|---|
+| core | yes | Windows Terminal, PowerShell, Git, chezmoi, JetBrains Mono Nerd Font |
+| dev | yes | Visual Studio Code, Zed |
+| security | yes | Bitwarden, simplewall |
+| productivity | yes | Obsidian |
+| backup | no | restic, rclone |
+| productivity-extra | no | Chrome, Firefox, Slack, Claude, ChatGPT, OBS Studio, mpv.net, Tailscale, OpenVPN |
+| local-llm | no | LM Studio |
+| lab | no | none (Hyper-V, Pro only) |
+
+A machine that already remembered `profiles` keeps it; pass `-Profiles` to change it.
 
 ## Quick start
 
@@ -25,7 +44,7 @@ After a reboot or a failure, re-run `pwsh -File script\setup.ps1` (or step 4 aga
 stages are idempotent and `-Profiles`, `-DistroRoot` and `-LinuxUser` are remembered.
 Check the result at any time, read-only, with `pwsh -File script\verify.ps1` (exit 0 =
 all good). Expect a few UAC prompts on the first run (Git, enabling Windows features,
-the WSL installer); installing PowerShell 7 (the MSIX package) normally raises none.
+the WSL installer, and any app installer that needs admin); installing PowerShell 7 (the MSIX package) normally raises none.
 See `docs/OPERATIONS.md`.
 
 **When the run finishes, two steps inside `wsl -d dev` are yours:** make zsh your login

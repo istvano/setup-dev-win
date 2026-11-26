@@ -24,16 +24,16 @@ With the MSIX PowerShell these files may be virtualised under `%LOCALAPPDATA%\Pa
 
 Stage-0 checks the OS, runs `winget source update`, installs the latest stable
 PowerShell 7 through winget when no pwsh 7.6 or later is present (ADR-016) and hands off
-to `script\setup.ps1`, which runs `preflight`, `features`, `dotfiles`, `wsl` and
-`verify`. `bootstrap.ps1` takes `-Profiles`, `-DistroRoot` and `-LinuxUser` and passes
-each on only when given. `setup.ps1` options: `-Profiles core,lab`, `-DistroRoot D:\WSL`,
+to `script\setup.ps1`, which runs `preflight`, `features`, `apps`, `dotfiles`, `wsl`
+and `verify`. `bootstrap.ps1` takes `-Profiles`, `-DistroRoot` and `-LinuxUser` and passes
+each on only when given. `setup.ps1` options: `-Profiles core,dev,lab`, `-DistroRoot D:\WSL`,
 `-LinuxUser <name>`, `-LinuxRef <ref>`, `-Plan` (show what would change, change
 nothing), `-Stage <name>` (run one stage). If preflight reports that the distro drive
 was not found, re-run with `-DistroRoot <drive>:\WSL`.
 
 `-Profiles`, `-DistroRoot` and `-LinuxUser` are remembered in `state.json` (ADR-015): a
 flag you pass wins and is kept; a later run without it uses the kept value; the first
-run without it uses the default (`core`, `D:\WSL`, and your Windows user name lowercased
+run without it uses the default (`core,dev,security,productivity`, `D:\WSL`, and your Windows user name lowercased
 with invalid characters removed, printed as `Linux user: <name>` before the distro is
 installed). Pass the flag again to change a choice. `-Plan` changes nothing, including
 the kept choices.
@@ -49,6 +49,8 @@ prompts on a first run, each from the source named:
 | PowerShell 7 | stage-0 installs the latest stable package, which is MSIX: a per-user install that normally raises no prompt (ADR-016) |
 | Enable Windows features and install WSL | this repository: `script/elevated/Enable-Features.ps1`, one prompt for all missing features plus `wsl --install --no-distribution` and `wsl --update` when WSL is missing or too old (ADR-018) |
 
+| App installers that need admin | winget, per package (the apps stage never elevates); a declined prompt fails only that app |
+
 A re-run with everything in place raises none of them.
 
 Things to expect:
@@ -59,6 +61,12 @@ Things to expect:
   `[fail]` lines are also appended to `%LOCALAPPDATA%\setup-dev-win\elevated.log`, and
   the stage prints the new ones after a failure. If a restart is needed the run exits
   3010; see "After a reboot".
+- `apps` prints `Profiles: ...` first, then installs what is missing with winget and
+  the JetBrains Mono Nerd Font (per user, SHA256-verified, no prompt). It runs on every
+  setup run, so a profile added later installs. An app already installed by hand is
+  adopted, never duplicated. One failed package does not stop the rest: the stage
+  fails naming each Id and reason; `pwsh -File script\setup.ps1 -Stage apps` retries
+  only what is missing.
 - `dotfiles` installs the latest stable chezmoi when none is present and applies
   `.wslconfig` (sections `[wsl2]`, `[general]`, `[experimental]`). An existing,
   different `.wslconfig` is backed up to `.wslconfig.backup.<timestamp>` first. Run
@@ -70,6 +78,33 @@ Things to expect:
   is interactive: the Linux bootstrap asks for your git identity. The cached image is
   reused on a rebuild; delete `<DistroRoot>\cache` to free the space.
 - `verify` always runs last and prints `OK <check>` or `FAIL <check>: <reason>`.
+
+### Profiles
+
+`-Profiles` takes a comma-separated list; `core` is always included. The default is
+`core,dev,security,productivity` (ADR-022).
+
+| Profile | Default | Packages (winget Id) |
+|---|---|---|
+| core | yes | `Microsoft.WindowsTerminal`, `Microsoft.PowerShell`, `Git.Git`, `twpayne.chezmoi`, plus the font |
+| dev | yes | `Microsoft.VisualStudioCode`, `ZedIndustries.Zed` |
+| security | yes | `Bitwarden.Bitwarden`, `Henry++.simplewall` |
+| productivity | yes | `Obsidian.Obsidian` |
+| backup | no | `restic.restic`, `Rclone.Rclone` |
+| productivity-extra | no | `Google.Chrome`, `Mozilla.Firefox`, `SlackTechnologies.Slack`, `Anthropic.Claude`, `OpenAI.ChatGPT`, `OBSProject.OBSStudio`, `mpv.net`, `Tailscale.Tailscale`, `OpenVPNTechnologies.OpenVPN` |
+| local-llm | no | `ElementLabs.LMStudio` |
+| lab | no | none (Hyper-V, Pro only) |
+
+To opt in to everything:
+
+```powershell
+pwsh -File script\setup.ps1 -Profiles core,dev,security,productivity,productivity-extra,local-llm
+```
+
+A machine whose `state.json` already holds `profiles` (for example `core` from
+milestone 1) keeps it: the apps stage prints the profiles in use and how to change them.
+Pass `-Profiles core,dev,security,productivity` once to adopt the new default. Nothing
+is ever uninstalled; `verify` lists installed apps that no profile declares as drift.
 
 ### After the first successful run: two steps inside WSL
 
@@ -115,11 +150,16 @@ default; it never writes. Every failure is shown, not just the first.
 4. `chezmoi verify` reports no drift for `.wslconfig`.
 5. Distro `dev` is registered, under the root, WSL 2, and starts as the configured user
    with uid >= 1000.
+   The `Apps` check runs after check 5 and before check 6: every package of the selected
+   profiles is installed, and the font when `core` is selected; a failure names what is
+   missing and the retry command (`pwsh -File script\setup.ps1 -Stage apps`).
 6. `~/workspace/setup-dev-linux-wsl/script/verify` exits 0 inside `dev` (its output is
    shown). If it says chezmoi is not initialised, the Linux bootstrap never completed:
    re-run `pwsh -File script\setup.ps1 -Stage wsl`.
 7. Informational only: Kernel DMA Protection state and `systemctl is-system-running`
-   in `dev` (`running` and `degraded` are normal).
+   in `dev` (`running` and `degraded` are normal), and `apps not in any profile`: winget
+   packages installed but declared in no profile, minus the Windows and winget
+   infrastructure in `profiles/drift-allowlist.psd1`. Nothing is uninstalled.
 
 ## Re-provision dev
 
@@ -289,6 +329,23 @@ Dotfiles and verify:
       source and passes after setup.
 - [x] `pwsh -File script\verify.ps1` passes with no flags after setup (exit 0, 6 of 6),
       after the fix for PowerShell's `~` expansion in native arguments (ADR-019).
+
+## W3 acceptance
+
+To run on a machine where Chrome and Firefox were installed by hand. Mark each `[x]`
+with the date when observed on hardware.
+
+- [ ] A fresh run installs the default profiles (`core,dev,security,productivity`) and
+      `verify` passes the `Apps` check.
+- [ ] Chrome and Firefox installed by hand and a run with `productivity-extra` adopts
+      them: no second copy, the stage reports `Adopted` or `already installed`.
+- [ ] Windows Terminal (inbox) is reported already installed.
+- [ ] Declining one installer UAC prompt fails only that app; the stage names it and a
+      re-run installs just that one.
+- [ ] `verify` prints the `apps not in any profile` line and lists real extras.
+- [ ] JetBrains Mono Nerd Font Mono appears in Windows Terminal's font list.
+- [ ] A machine with `profiles = core` kept from milestone 1 prints the profiles line and
+      the `-Profiles` hint.
 
 ## Running the gate
 
