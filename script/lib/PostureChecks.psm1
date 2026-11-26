@@ -21,7 +21,9 @@ Import-Module (Join-Path $libRoot 'WindowsFeatures.psm1') -Force
 Import-Module (Join-Path $libRoot 'Winget.psm1') -Force
 
 $script:WslHyperVVmCreatorId = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
-$script:ListenerProcesses = @('wslrelay', 'vmmem', 'vmmemWSL', 'docker-proxy', 'LM Studio')
+# 'LM Studio': the owning process name still needs confirming on hardware. com.docker.backend and
+# vpnkit are Docker Desktop's host-side listeners.
+$script:ListenerProcesses = @('wslrelay', 'vmmem', 'vmmemWSL', 'docker-proxy', 'com.docker.backend', 'vpnkit', 'LM Studio')
 $script:ElevatedMessage = 'needs an elevated terminal'
 
 # ---------------------------------------------------------------- shared helpers
@@ -110,11 +112,13 @@ function Get-TpmState {
     param()
     $result = Invoke-Native -FilePath 'tpmtool.exe' -ArgumentList @('getdeviceinformation')
     $present = $false
+    $seen = $false
     $version = ''
     foreach ($line in $result.Output) {
-        if ($line -match 'TPM Present:\s*(\w+)') { $present = $Matches[1] -eq 'True' }
+        if ($line -match 'TPM Present:\s*(\w+)') { $present = $Matches[1] -eq 'True'; $seen = $true }
         if ($line -match 'TPM Version:\s*([\d.]+)') { $version = $Matches[1] }
     }
+    if (-not $seen) { throw 'tpmtool did not report whether a TPM is present' }
     if (-not $present) { return 'absent' }
     if (-not $version) { throw 'tpmtool did not report a TPM version' }
     return "present, $version"
@@ -196,9 +200,16 @@ function Get-DeviceEncryptionState {
     param()
     Assert-CmdletAvailable -Name 'Get-BitLockerVolume'
     $drive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
-    $volume = Invoke-PostureRead -NeedsAdmin -Script { Get-BitLockerVolume -MountPoint $drive }
-    if (-not $volume) { throw "no BitLocker volume returned for $drive" }
-    return $(if ("$(@($volume)[0].ProtectionStatus)" -in 'On', '1') { 'on' } else { 'off' })
+    $volume = Invoke-PostureRead -NeedsAdmin -Script {
+        $found = Get-BitLockerVolume -MountPoint $drive
+        if (-not $found) { throw "no BitLocker volume returned for $drive" }
+        $found
+    }
+    switch ("$(@($volume)[0].ProtectionStatus)") {
+        { $_ -in 'On', '1' } { return 'on' }
+        { $_ -in 'Off', '0' } { return 'off' }
+        default { throw "BitLocker protection status is $_ (unknown)" }
+    }
 }
 
 # ---------------------------------------------------------------- Defender readers
@@ -303,11 +314,12 @@ function Get-UacSecureDesktop {
 
 function Get-FirewallProfileState {
     # Microsoft: https://learn.microsoft.com/powershell/module/netsecurity/get-netfirewallprofile
+    # ActiveStore: the effective values after policy, not only the persistent store.
     [CmdletBinding()]
     [OutputType([string])]
     param([Parameter(Mandatory)][ValidateSet('Domain', 'Private', 'Public')][string]$Name)
     Assert-CmdletAvailable -Name 'Get-NetFirewallProfile'
-    $firewallProfile = Invoke-PostureRead -Script { Get-NetFirewallProfile -Name $Name }
+    $firewallProfile = Invoke-PostureRead -Script { Get-NetFirewallProfile -Name $Name -PolicyStore ActiveStore }
     if (-not $firewallProfile) { throw "no $Name firewall profile returned" }
     $enabled = if ("$($firewallProfile.Enabled)" -eq 'True') { 'enabled' } else { 'disabled' }
     return "$enabled, inbound $($firewallProfile.DefaultInboundAction)"
@@ -320,7 +332,7 @@ function Get-WslHyperVInboundState {
     [OutputType([string])]
     param()
     Assert-CmdletAvailable -Name 'Get-NetFirewallHyperVVMSetting'
-    $setting = Invoke-PostureRead -Script { Get-NetFirewallHyperVVMSetting -Name $script:WslHyperVVmCreatorId }
+    $setting = Invoke-PostureRead -Script { Get-NetFirewallHyperVVMSetting -Name $script:WslHyperVVmCreatorId -PolicyStore ActiveStore }
     if (-not $setting) { throw 'no Hyper-V firewall setting returned for WSL' }
     return "$($setting.DefaultInboundAction)"
 }
@@ -385,21 +397,30 @@ function Get-PowerShellV2State {
 function Get-RemoteAssistanceState {
     # Microsoft: https://learn.microsoft.com/windows/client-management/mdm/policy-csp-remoteassistance
     # fAllowToGetHelp is the per-machine switch the Remote tab of System Properties writes.
+    # The Group Policy value, when present, overrides the local one.
     [CmdletBinding()]
     [OutputType([string])]
     param()
+    $policy = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name 'fAllowToGetHelp'
+    if ($null -ne $policy) { return ConvertTo-OnOff -Value $policy }
     $value = Get-RequiredRegistryValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' -Name 'fAllowToGetHelp'
     return ConvertTo-OnOff -Value $value
 }
 
 function Get-AutoplayState {
     # Microsoft: https://learn.microsoft.com/windows/win32/shell/autoplay-reg
-    # DisableAutoplay 1 means AutoPlay is off for the user.
+    # DisableAutoplay 1 means AutoPlay is off for the user; a missing value means on (the
+    # Windows default). The policy NoDriveTypeAutoRun = 255 (0xFF) turns it off for every drive type.
     [CmdletBinding()]
     [OutputType([string])]
     param()
-    $value = Get-RequiredRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers' -Name 'DisableAutoplay'
-    return $(if ([int]$value -ne 0) { 'off' } else { 'on' })
+    foreach ($hive in 'HKLM', 'HKCU') {
+        $policy = Get-PostureRegistryValue -Path "${hive}:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name 'NoDriveTypeAutoRun'
+        if ($null -ne $policy -and [int]$policy -eq 255) { return 'off' }
+    }
+    $value = Get-PostureRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers' -Name 'DisableAutoplay'
+    if ($null -ne $value -and [int]$value -ne 0) { return 'off' }
+    return 'on'
 }
 
 # ---------------------------------------------------------------- Privacy readers
@@ -409,6 +430,9 @@ function Get-AdvertisingIdState {
     [CmdletBinding()]
     [OutputType([string])]
     param()
+    # The Group Policy DisabledByGroupPolicy = 1 turns it off whatever the user setting says.
+    $policy = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo' -Name 'DisabledByGroupPolicy'
+    if ($null -ne $policy -and [int]$policy -eq 1) { return 'off' }
     $value = Get-RequiredRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo' -Name 'Enabled'
     return ConvertTo-OnOff -Value $value
 }
@@ -423,13 +447,14 @@ function Get-TailoredExperiencesState {
 
 function Get-DiagnosticDataState {
     # Microsoft: https://learn.microsoft.com/windows/privacy/configure-windows-diagnostic-data-in-your-organization
-    # AllowTelemetry policy: 0 Security, 1 Required, 2 Enhanced (legacy), 3 Optional. Without
-    # the policy the Settings choice applies and has no reliable readable value.
+    # AllowTelemetry: 0 Security, 1 Required, 2 Enhanced (legacy), 3 Optional. The Group Policy
+    # value is read first, then the Settings value; with neither there is nothing to read.
     [CmdletBinding()]
     [OutputType([string])]
     param()
-    $value = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection' -Name 'AllowTelemetry'
-    if ($null -eq $value) { return 'not set by policy; see Settings > Privacy & security > Diagnostics & feedback' }
+    $value = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' -Name 'AllowTelemetry'
+    if ($null -eq $value) { $value = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection' -Name 'AllowTelemetry' }
+    if ($null -eq $value) { return 'not set (no Group Policy or Settings value); see Settings > Privacy & security > Diagnostics & feedback' }
     switch ([int]$value) {
         0 { return 'Security' }
         1 { return 'Required' }
@@ -451,30 +476,52 @@ function Get-ActivityHistoryState {
 # ---------------------------------------------------------------- Apps and account readers
 
 function Get-CopilotAppState {
-    # Uses the repository's winget helper. Note: it exports the winget source only.
+    # The winget helper exports the winget source only, and Copilot is a Store package, so the
+    # per-user Appx list is read too (it needs no elevation).
     [CmdletBinding()]
     [OutputType([string])]
     param()
+    if (@(Get-CopilotAppxPackage).Count -gt 0) { return 'installed' }
     $ids = @(Get-WingetInstalledIds)
     return $(if ($ids -contains 'Microsoft.Copilot' -or $ids -contains 'Microsoft.365Copilot') { 'installed' } else { 'not installed' })
+}
+
+function Get-CopilotAppxPackage {
+    # Internal, mockable. Names of installed Microsoft.Copilot* Appx packages; empty when the
+    # Appx cmdlet is missing or fails.
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param()
+    if ($null -eq (Get-Command -Name 'Get-AppxPackage' -ErrorAction SilentlyContinue)) { return [string[]]@() }
+    try { return [string[]]@(Get-AppxPackage -Name 'Microsoft.Copilot*' | ForEach-Object { $_.Name }) }
+    catch { return [string[]]@() }
 }
 
 function Get-SimplewallState {
     [CmdletBinding()]
     [OutputType([string])]
     param()
-    if (Test-WingetPackage -Id 'Henry++.simplewall') { return 'installed; filtering is off until you enable it in simplewall' }
+    if (Test-WingetPackage -Id 'Henry++.simplewall') { return 'installed; enable and configure filtering in simplewall yourself (it blocks outbound traffic until you allow apps)' }
     return 'not installed'
 }
 
+function Get-CurrentTokenClaim {
+    # Internal, mockable. The claims of the current Windows identity. WindowsIdentity.Groups
+    # omits deny-only groups, which is how a UAC-filtered token lists Administrators; the
+    # claims include them (group SID and deny-only SID claim types).
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param()
+    if (-not $IsWindows) { throw 'the current token can be read only on Windows' }
+    return @([System.Security.Principal.WindowsIdentity]::GetCurrent().Claims)
+}
+
 function Get-CurrentGroupSid {
-    # Internal, mockable. The SIDs in the current token's groups. With UAC a filtered
-    # token lists Administrators as deny-only, which still means the account is an admin.
+    # Internal, mockable. The SIDs among the current token's claims, deny-only ones included.
     [CmdletBinding()]
     [OutputType([string[]])]
     param()
-    if (-not $IsWindows) { throw 'the current token can be read only on Windows' }
-    return [string[]]@([System.Security.Principal.WindowsIdentity]::GetCurrent().Groups | ForEach-Object { $_.Value })
+    return [string[]]@(Get-CurrentTokenClaim | ForEach-Object { $_.Value })
 }
 
 function Get-AdminAccountState {
@@ -564,7 +611,7 @@ function Get-PostureChecks {
         New-PostureCheck -Id 'firewall-domain' -Group 'Firewall' -Title 'Domain profile' -Read { Get-FirewallProfileState -Name 'Domain' } -OkPattern $firewallOk -Recommendation $firewall
         New-PostureCheck -Id 'firewall-private' -Group 'Firewall' -Title 'Private profile' -Read { Get-FirewallProfileState -Name 'Private' } -OkPattern $firewallOk -Recommendation $firewall
         New-PostureCheck -Id 'firewall-public' -Group 'Firewall' -Title 'Public profile' -Read { Get-FirewallProfileState -Name 'Public' } -OkPattern $firewallOk -Recommendation $firewall
-        New-PostureCheck -Id 'firewall-wsl' -Group 'Firewall' -Title 'WSL Hyper-V firewall inbound' -Read { Get-WslHyperVInboundState } -OkPattern '^Block$' -Recommendation "Set-NetFirewallHyperVVMSetting -Name '$script:WslHyperVVmCreatorId' -DefaultInboundAction Block (elevated)."
+        New-PostureCheck -Id 'firewall-wsl' -Group 'Firewall' -Title 'WSL Hyper-V firewall inbound' -Read { Get-WslHyperVInboundState } -OkPattern '^(Block|NotConfigured)$' -Recommendation "Set-NetFirewallHyperVVMSetting -Name '$script:WslHyperVVmCreatorId' -DefaultInboundAction Block (elevated)."
         New-PostureCheck -Id 'port-proxy' -Group 'Network' -Title 'Port proxy' -Read { Get-PortProxyState } -OkPattern '^none$' -Recommendation 'Remove entries with netsh interface portproxy delete (elevated).'
         New-PostureCheck -Id 'exposed-listeners' -Group 'Network' -Title 'WSL/Docker listeners' -Read { Get-ExposedListenerState } -OkPattern '^none$' -Recommendation 'Bind the service to 127.0.0.1; never mirrored mode or a LAN bind (ADR-006).'
         New-PostureCheck -Id 'smb1' -Group 'Legacy' -Title 'SMBv1' -Read { Get-Smb1State } -OkPattern '^(Disabled|Absent)$' -Recommendation 'Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol (elevated).'
@@ -573,10 +620,10 @@ function Get-PostureChecks {
         New-PostureCheck -Id 'autoplay' -Group 'Legacy' -Title 'AutoPlay' -Read { Get-AutoplayState } -OkPattern '^off$' -Recommendation 'Settings > Bluetooth & devices > AutoPlay, off.'
         New-PostureCheck -Id 'advertising-id' -Group 'Privacy' -Title 'Advertising ID' -Read { Get-AdvertisingIdState } -OkPattern '^off$' -Recommendation 'Settings > Privacy & security > General.'
         New-PostureCheck -Id 'tailored-experiences' -Group 'Privacy' -Title 'Tailored experiences' -Read { Get-TailoredExperiencesState } -OkPattern '^off$' -Recommendation 'Settings > Privacy & security > Diagnostics & feedback.'
-        New-PostureCheck -Id 'diagnostic-data' -Group 'Privacy' -Title 'Diagnostic data' -Read { Get-DiagnosticDataState } -OkPattern '^(Required|Security)$' -InfoPattern '^not set by policy' -Recommendation 'Diagnostics & feedback > Send optional diagnostic data, off.'
-        New-PostureCheck -Id 'activity-history' -Group 'Privacy' -Title 'Activity history' -Read { Get-ActivityHistoryState } -OkPattern '^off \(policy\)$' -InfoPattern '^not set by policy' -Recommendation 'Settings > Privacy & security > Activity history.'
+        New-PostureCheck -Id 'diagnostic-data' -Group 'Privacy' -Title 'Diagnostic data' -Read { Get-DiagnosticDataState } -OkPattern '^(Required|Security)$' -InfoPattern '^not set' -Recommendation 'Diagnostics & feedback > Send optional diagnostic data, off.'
+        New-PostureCheck -Id 'activity-history' -Group 'Privacy' -Title 'Activity history' -Read { Get-ActivityHistoryState } -OkPattern '^off \(policy\)$' -InfoPattern '^not set' -Recommendation 'Settings > Privacy & security > Activity history.'
         New-PostureCheck -Id 'copilot-apps' -Group 'Apps' -Title 'Copilot apps' -Read { Get-CopilotAppState } -Recommendation 'The operator decides.'
-        New-PostureCheck -Id 'simplewall' -Group 'Apps' -Title 'simplewall filtering' -Read { Get-SimplewallState } -Recommendation 'Installed; filtering is off until you enable it in simplewall.'
+        New-PostureCheck -Id 'simplewall' -Group 'Apps' -Title 'simplewall filtering' -Read { Get-SimplewallState } -Recommendation 'Installed; enable and configure filtering in simplewall yourself (it blocks outbound traffic until you allow apps).'
         New-PostureCheck -Id 'admin-account' -Group 'Account' -Title 'Daily account is an administrator' -Read { Get-AdminAccountState } -Recommendation 'Operator decision: the daily account is an administrator.'
     )
     return [hashtable[]]$checks

@@ -32,7 +32,7 @@ function Get-PostureTestCase {
         @{ Id = 'firewall-domain'; Group = 'Firewall'; Title = 'Domain profile'; Reader = 'Get-FirewallProfileState'; Key = 'Domain'; Ok = 'enabled, inbound Block'; Bad = 'disabled, inbound Block'; BadStatus = 'RECOMMEND'; Rec = 'Windows Security > Firewall & network protection.' }
         @{ Id = 'firewall-private'; Group = 'Firewall'; Title = 'Private profile'; Reader = 'Get-FirewallProfileState'; Key = 'Private'; Ok = 'enabled, inbound NotConfigured'; Bad = 'enabled, inbound Allow'; BadStatus = 'RECOMMEND'; Rec = 'Windows Security > Firewall & network protection.' }
         @{ Id = 'firewall-public'; Group = 'Firewall'; Title = 'Public profile'; Reader = 'Get-FirewallProfileState'; Key = 'Public'; Ok = 'enabled, inbound Block'; Bad = 'disabled, inbound Allow'; BadStatus = 'RECOMMEND'; Rec = 'Windows Security > Firewall & network protection.' }
-        @{ Id = 'firewall-wsl'; Group = 'Firewall'; Title = 'WSL Hyper-V firewall inbound'; Reader = 'Get-WslHyperVInboundState'; Ok = 'Block'; Bad = 'Allow'; BadStatus = 'RECOMMEND'; Rec = "Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Block (elevated)." }
+        @{ Id = 'firewall-wsl'; Group = 'Firewall'; Title = 'WSL Hyper-V firewall inbound'; Reader = 'Get-WslHyperVInboundState'; Ok = 'NotConfigured'; Bad = 'Allow'; BadStatus = 'RECOMMEND'; Rec = "Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Block (elevated)." }
         @{ Id = 'port-proxy'; Group = 'Network'; Title = 'Port proxy'; Reader = 'Get-PortProxyState'; Ok = 'none'; Bad = '0.0.0.0:8080 -> 127.0.0.1:80'; BadStatus = 'RECOMMEND'; Rec = 'Remove entries with netsh interface portproxy delete (elevated).' }
         @{ Id = 'exposed-listeners'; Group = 'Network'; Title = 'WSL/Docker listeners'; Reader = 'Get-ExposedListenerState'; Ok = 'none'; Bad = 'vmmem 0.0.0.0:8080'; BadStatus = 'RECOMMEND'; Rec = 'Bind the service to 127.0.0.1; never mirrored mode or a LAN bind (ADR-006).' }
         @{ Id = 'smb1'; Group = 'Legacy'; Title = 'SMBv1'; Reader = 'Get-Smb1State'; Ok = 'Disabled'; Bad = 'Enabled'; BadStatus = 'RECOMMEND'; Rec = 'Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol (elevated).' }
@@ -49,7 +49,7 @@ function Get-PostureTestCase {
         @{ Id = 'smart-app-control'; Group = 'Platform'; Title = 'Smart App Control'; Reader = 'Get-SmartAppControlState'; Value = 'off' }
         @{ Id = 'defender-asr'; Group = 'Defender'; Title = 'Attack surface reduction rules'; Reader = 'Get-AsrRuleSummary'; Value = '0 rules configured (ASR is documented for Pro/Enterprise)' }
         @{ Id = 'copilot-apps'; Group = 'Apps'; Title = 'Copilot apps'; Reader = 'Get-CopilotAppState'; Value = 'installed' }
-        @{ Id = 'simplewall'; Group = 'Apps'; Title = 'simplewall filtering'; Reader = 'Get-SimplewallState'; Value = 'installed; filtering is off until you enable it in simplewall' }
+        @{ Id = 'simplewall'; Group = 'Apps'; Title = 'simplewall filtering'; Reader = 'Get-SimplewallState'; Value = 'installed; enable and configure filtering in simplewall yourself (it blocks outbound traffic until you allow apps)' }
         @{ Id = 'admin-account'; Group = 'Account'; Title = 'Daily account is an administrator'; Reader = 'Get-AdminAccountState'; Value = 'yes' }
     )
     @{ Cases = $cases; InfoCases = $infoCases }

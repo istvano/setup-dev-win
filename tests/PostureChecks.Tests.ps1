@@ -15,7 +15,7 @@ BeforeAll {
     $script:Created = @()
     foreach ($name in 'Get-MpComputerStatus', 'Get-MpPreference', 'Get-NetFirewallProfile', 'Get-BitLockerVolume', 'Get-NetTCPConnection', 'Get-NetFirewallHyperVVMSetting') {
         if (-not (Get-Command -Name $name -ErrorAction SilentlyContinue)) {
-            Set-Item -Path "Function:\global:$name" -Value { [CmdletBinding()] param([string]$Name, [string]$MountPoint, [string]$State) throw 'stub: mock me' }
+            Set-Item -Path "Function:\global:$name" -Value { [CmdletBinding()] param([string]$Name, [string]$MountPoint, [string]$State, [string]$PolicyStore) throw 'stub: mock me' }
             $script:Created += $name
         }
     }
@@ -67,8 +67,8 @@ Describe 'Get-PostureChecks' {
         @($checks | ForEach-Object Id | Sort-Object -Unique).Count | Should-Be $checks.Count
     }
 
-    It 'is ASCII only' {
-        $bytes = [System.IO.File]::ReadAllBytes((Join-Path $script:Root 'script/lib/PostureChecks.psm1'))
+    It 'is ASCII only: <_>' -ForEach @('script/lib/PostureChecks.psm1', 'script/hardening-check.ps1') {
+        $bytes = [System.IO.File]::ReadAllBytes((Join-Path $script:Root $_))
         @($bytes | Where-Object { $_ -gt 127 }).Count | Should-Be 0
     }
 }
@@ -287,6 +287,8 @@ Describe 'Posture readers' {
             Get-TpmState | Should-Be 'present, 2.0'
             Mock Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @('-TPM Present: False') } }
             Get-TpmState | Should-Be 'absent'
+            Mock Invoke-Native { [pscustomobject]@{ ExitCode = 0; Output = @('garbled output') } }
+            { Get-TpmState } | Should-Throw '*whether a TPM is present*'
         }
     }
 
@@ -301,7 +303,23 @@ Describe 'Posture readers' {
                     [pscustomobject]@{ LocalAddress = '::1'; LocalPort = 4; OwningProcess = 11 }
                 )
             }
-            Mock Get-Process { [pscustomobject]@{ ProcessName = $(if ($Id -eq 10) { 'vmmem' } elseif ($Id -eq 11) { 'wslrelay' } else { 'chrome' }) } }
+            Mock Get-Process { [pscustomobject]@{ ProcessName = $(if ($Id -eq 10) { 'vmmem' } elseif ($Id -eq 11) { 'wslrelay' } elseif ($Id -eq 13) { 'com.docker.backend' } elseif ($Id -eq 14) { 'vpnkit' } else { 'chrome' }) } }
+            Get-ExposedListenerState | Should-Be 'wslrelay 0.0.0.0:2'
+            Mock Get-NetTCPConnection {
+                @(
+                    [pscustomobject]@{ LocalAddress = '0.0.0.0'; LocalPort = 5; OwningProcess = 13 }
+                    [pscustomobject]@{ LocalAddress = '192.168.1.5'; LocalPort = 6; OwningProcess = 14 }
+                )
+            }
+            Get-ExposedListenerState | Should-Be 'com.docker.backend 0.0.0.0:5; vpnkit 192.168.1.5:6'
+            Mock Get-NetTCPConnection {
+                @(
+                    [pscustomobject]@{ LocalAddress = '127.0.0.1'; LocalPort = 1; OwningProcess = 10 }
+                    [pscustomobject]@{ LocalAddress = '0.0.0.0'; LocalPort = 2; OwningProcess = 11 }
+                    [pscustomobject]@{ LocalAddress = '0.0.0.0'; LocalPort = 3; OwningProcess = 12 }
+                    [pscustomobject]@{ LocalAddress = '::1'; LocalPort = 4; OwningProcess = 11 }
+                )
+            }
             Get-ExposedListenerState | Should-Be 'wslrelay 0.0.0.0:2'
             Mock Get-NetTCPConnection { @() }
             Get-ExposedListenerState | Should-Be 'none'
@@ -317,23 +335,107 @@ Describe 'Posture readers' {
         }
     }
 
+    It 'Get-CurrentGroupSid maps token claims, so a deny-only Administrators claim counts' {
+        InModuleScope PostureChecks {
+            Mock Get-CurrentTokenClaim {
+                @(
+                    [pscustomobject]@{ Type = 'http://schemas.microsoft.com/ws/2008/06/identity/claims/groupsid'; Value = 'S-1-1-0' }
+                    [pscustomobject]@{ Type = 'http://schemas.microsoft.com/ws/2008/06/identity/claims/denyonlysid'; Value = 'S-1-5-32-544' }
+                )
+            }
+            @(Get-CurrentGroupSid) | Should-BeCollection @('S-1-1-0', 'S-1-5-32-544')
+            Get-AdminAccountState | Should-Be 'yes'
+            Mock Get-CurrentTokenClaim { @([pscustomobject]@{ Type = 'groupsid'; Value = 'S-1-1-0' }) }
+            Get-AdminAccountState | Should-Be 'no'
+        }
+    }
+
+    It 'Get-AutoplayState: missing value is on, DisableAutoplay 1 is off, NoDriveTypeAutoRun 255 is off' {
+        InModuleScope PostureChecks {
+            Mock Get-PostureRegistryValue { $null }
+            Get-AutoplayState | Should-Be 'on'
+            Mock Get-PostureRegistryValue { 1 } -ParameterFilter { $Name -eq 'DisableAutoplay' }
+            Get-AutoplayState | Should-Be 'off'
+            Mock Get-PostureRegistryValue { $null } -ParameterFilter { $Name -eq 'DisableAutoplay' }
+            Mock Get-PostureRegistryValue { 255 } -ParameterFilter { $Name -eq 'NoDriveTypeAutoRun' -and $Path -like 'HKCU:*' }
+            Get-AutoplayState | Should-Be 'off'
+            Mock Get-PostureRegistryValue { 145 } -ParameterFilter { $Name -eq 'NoDriveTypeAutoRun' -and $Path -like 'HKCU:*' }
+            Get-AutoplayState | Should-Be 'on'
+        }
+    }
+
+    It 'Get-DiagnosticDataState reads the Group Policy value first, then the Settings value' {
+        InModuleScope PostureChecks {
+            Mock Get-PostureRegistryValue { $null }
+            Get-DiagnosticDataState | Should-BeLikeString 'not set*'
+            Mock Get-PostureRegistryValue { 3 } -ParameterFilter { $Path -like 'HKLM:\SOFTWARE\Microsoft\*' }
+            Get-DiagnosticDataState | Should-Be 'Optional'
+            Mock Get-PostureRegistryValue { 1 } -ParameterFilter { $Path -like 'HKLM:\SOFTWARE\Policies\*' }
+            Get-DiagnosticDataState | Should-Be 'Required'
+        }
+    }
+
+    It 'Get-RemoteAssistanceState: the policy overrides the local value' {
+        InModuleScope PostureChecks {
+            Mock Get-PostureRegistryValue { 1 } -ParameterFilter { $Path -like '*Control\Remote Assistance' }
+            Mock Get-PostureRegistryValue { $null } -ParameterFilter { $Path -like '*Policies*' }
+            Get-RemoteAssistanceState | Should-Be 'on'
+            Mock Get-PostureRegistryValue { 0 } -ParameterFilter { $Path -like '*Policies*' }
+            Get-RemoteAssistanceState | Should-Be 'off'
+        }
+    }
+
+    It 'Get-AdvertisingIdState: DisabledByGroupPolicy 1 means off' {
+        InModuleScope PostureChecks {
+            Mock Get-PostureRegistryValue { 1 } -ParameterFilter { $Name -eq 'Enabled' }
+            Mock Get-PostureRegistryValue { $null } -ParameterFilter { $Name -eq 'DisabledByGroupPolicy' }
+            Get-AdvertisingIdState | Should-Be 'on'
+            Mock Get-PostureRegistryValue { 1 } -ParameterFilter { $Name -eq 'DisabledByGroupPolicy' }
+            Get-AdvertisingIdState | Should-Be 'off'
+        }
+    }
+
+    It 'Get-CopilotAppState sees an Appx package even when winget does not list it' {
+        InModuleScope PostureChecks {
+            Mock Get-WingetInstalledIds { @('Git.Git') }
+            Mock Get-CopilotAppxPackage { @('Microsoft.Copilot') }
+            Get-CopilotAppState | Should-Be 'installed'
+            Mock Get-CopilotAppxPackage { @() }
+            Get-CopilotAppState | Should-Be 'not installed'
+            Mock Get-WingetInstalledIds { @('Microsoft.365Copilot') }
+            Get-CopilotAppState | Should-Be 'installed'
+        }
+    }
+
+    It 'Get-DeviceEncryptionState: an unknown protection status and a missing volume are UNKNOWN' {
+        InModuleScope PostureChecks {
+            Mock Get-Command { [pscustomobject]@{ Name = 'Get-BitLockerVolume' } } -ParameterFilter { $Name -eq 'Get-BitLockerVolume' }
+            Mock Get-BitLockerVolume { [pscustomobject]@{ ProtectionStatus = 'Unknown' } }
+            { Get-DeviceEncryptionState } | Should-Throw '*unknown*'
+            Mock Get-BitLockerVolume { $null }
+            Mock Test-IsElevated { $true }
+            { Get-DeviceEncryptionState } | Should-Throw '*no BitLocker volume*'
+            Mock Test-IsElevated { $false }
+            { Get-DeviceEncryptionState } | Should-Throw '*needs an elevated terminal*'
+        }
+    }
+
+    It 'the firewall readers ask for the ActiveStore' {
+        InModuleScope PostureChecks {
+            Mock Get-Command { [pscustomobject]@{ Name = 'x' } } -ParameterFilter { $Name -in 'Get-NetFirewallProfile', 'Get-NetFirewallHyperVVMSetting' }
+            Mock Get-NetFirewallProfile { [pscustomobject]@{ Enabled = 'True'; DefaultInboundAction = 'Block' } } -ParameterFilter { $PolicyStore -eq 'ActiveStore' }
+            Mock Get-NetFirewallHyperVVMSetting { [pscustomobject]@{ DefaultInboundAction = 'NotConfigured' } } -ParameterFilter { $PolicyStore -eq 'ActiveStore' }
+            Get-FirewallProfileState -Name 'Domain' | Should-Be 'enabled, inbound Block'
+            Get-WslHyperVInboundState | Should-Be 'NotConfigured'
+        }
+    }
+
     It 'Get-ActivityHistoryState is INFO-shaped when no policy is set' {
         InModuleScope PostureChecks {
             Mock Get-PostureRegistryValue { $null }
             Get-ActivityHistoryState | Should-BeLikeString 'not set by policy*Activity history*'
             Mock Get-PostureRegistryValue { 0 }
             Get-ActivityHistoryState | Should-Be 'off (policy)'
-        }
-    }
-
-    It 'Get-DiagnosticDataState treats an absent policy as the Settings value' {
-        InModuleScope PostureChecks {
-            Mock Get-PostureRegistryValue { $null }
-            Get-DiagnosticDataState | Should-BeLikeString 'not set by policy*'
-            Mock Get-PostureRegistryValue { 1 }
-            Get-DiagnosticDataState | Should-Be 'Required'
-            Mock Get-PostureRegistryValue { 3 }
-            Get-DiagnosticDataState | Should-Be 'Optional'
         }
     }
 
