@@ -208,6 +208,9 @@ Describe 'Elevation invariants' {
             '\bnetsh(\.exe)?\b.*\b(add|set|delete)\b'
             'Start-Process\b.*-Verb\s+RunAs'
             'Invoke-ElevatedScript'
+            '\bInstall-\w'
+            '\.(SetValue|DeleteValue|CreateSubKey)\('
+            '\breg(\.exe)?\s+(add|delete|import)'
         )
         foreach ($relative in $script:PostureFiles) {
             $path = Join-Path $script:Root $relative

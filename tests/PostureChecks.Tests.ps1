@@ -371,7 +371,7 @@ Describe 'Posture readers' {
             Mock Get-PostureRegistryValue { 3 } -ParameterFilter { $Path -like 'HKLM:\SOFTWARE\Microsoft\*' }
             Get-DiagnosticDataState | Should-Be 'Optional'
             Mock Get-PostureRegistryValue { 1 } -ParameterFilter { $Path -like 'HKLM:\SOFTWARE\Policies\*' }
-            Get-DiagnosticDataState | Should-Be 'Required'
+            Get-DiagnosticDataState | Should-Be 'Required (set by policy)'
         }
     }
 
@@ -420,13 +420,83 @@ Describe 'Posture readers' {
         }
     }
 
+    It 'Get-PowerShellV2State: no row is Absent when the feature list works, UNKNOWN when it does not' {
+        InModuleScope PostureChecks {
+            Mock Get-FeatureState { 'Unknown' } -ParameterFilter { $Name -eq 'MicrosoftWindowsPowerShellV2Root' }
+            Mock Get-FeatureState { 'Disabled' } -ParameterFilter { $Name -eq 'SMB1Protocol' }
+            Get-PowerShellV2State | Should-Be 'Absent (removed from Windows)'
+            Mock Get-FeatureState { 'Unknown' } -ParameterFilter { $Name -eq 'SMB1Protocol' }
+            { Get-PowerShellV2State } | Should-Throw '*could not be read*'
+            Mock Get-FeatureState { 'Enabled' } -ParameterFilter { $Name -eq 'MicrosoftWindowsPowerShellV2Root' }
+            Get-PowerShellV2State | Should-Be 'Enabled'
+            Mock Get-FeatureState { throw 'CIM failed' } -ParameterFilter { $null -ne $Name }
+            { Get-PowerShellV2State } | Should-Throw '*CIM failed*'
+        }
+    }
+
+    It 'the PowerShell 2.0 row is OK with the removed-from-Windows value' {
+        $check = Get-PostureChecks | Where-Object { $_.Id -eq 'powershell-v2' }
+        (& $check.Evaluate 'Absent (removed from Windows)') | Should-Be 'OK'
+    }
+
+    It 'Get-CopilotAppxPackage throws on a missing cmdlet; a failed Appx read is UNKNOWN unless winget finds it' {
+        InModuleScope PostureChecks {
+            Mock Get-Command { $null } -ParameterFilter { $Name -eq 'Get-AppxPackage' }
+            { Get-CopilotAppxPackage } | Should-Throw '*not available*'
+            Mock Get-CopilotAppxPackage { throw 'appx failed' }
+            Mock Get-WingetInstalledIds { @('Git.Git') }
+            { Get-CopilotAppState } | Should-Throw '*appx failed*'
+            Mock Get-WingetInstalledIds { @('Microsoft.Copilot') }
+            Get-CopilotAppState | Should-Be 'installed'
+        }
+    }
+
+    It 'Invoke-PostureRead maps WMI and CIM access-denied wording to the elevation reason' {
+        InModuleScope PostureChecks {
+            Mock Test-IsElevated { $false }
+            foreach ($message in 'Access denied', 'Access is denied', 'HRESULT 0x80041003') {
+                $text = $message
+                { Invoke-PostureRead -Script { throw $text } } | Should-Throw '*needs an elevated terminal*'
+            }
+            { Invoke-PostureRead -Script { throw 'something else' } } | Should-Throw '*something else*'
+            Mock Test-IsElevated { $true }
+            { Invoke-PostureRead -Script { throw 'Access denied' } } | Should-Throw '*Access denied*'
+        }
+    }
+
+    It 'Get-WslHyperVInboundState reports Enabled False as disabled' {
+        InModuleScope PostureChecks {
+            Mock Get-Command { [pscustomobject]@{ Name = 'x' } } -ParameterFilter { $Name -eq 'Get-NetFirewallHyperVVMSetting' }
+            Mock Get-NetFirewallHyperVVMSetting { [pscustomobject]@{ Enabled = 'False'; DefaultInboundAction = 'Block' } }
+            Get-WslHyperVInboundState | Should-Be 'disabled, inbound Block'
+            Mock Get-NetFirewallHyperVVMSetting { [pscustomobject]@{ Enabled = 'True'; DefaultInboundAction = 'Block' } }
+            Get-WslHyperVInboundState | Should-Be 'enabled, inbound Block'
+        }
+    }
+
+    It 'Get-SmartAppControlState says off cannot be undone without a reinstall' {
+        InModuleScope PostureChecks {
+            Mock Get-PostureRegistryValue { 0 }
+            Get-SmartAppControlState | Should-Be 'off (cannot be re-enabled without a reinstall)'
+        }
+    }
+
+    It 'Get-AsrRuleSummary does not count a hidden N/A value as a rule' {
+        InModuleScope PostureChecks {
+            Mock Get-DefenderPreference { [pscustomobject]@{ AttackSurfaceReductionRules_Ids = @('N/A: Must be running as administrator') } }
+            Get-AsrRuleSummary | Should-BeLikeString '0 rules*'
+            Mock Get-DefenderPreference { [pscustomobject]@{ AttackSurfaceReductionRules_Ids = @('guid-1', 'guid-2') } }
+            Get-AsrRuleSummary | Should-BeLikeString '2 rules*'
+        }
+    }
+
     It 'the firewall readers ask for the ActiveStore' {
         InModuleScope PostureChecks {
             Mock Get-Command { [pscustomobject]@{ Name = 'x' } } -ParameterFilter { $Name -in 'Get-NetFirewallProfile', 'Get-NetFirewallHyperVVMSetting' }
             Mock Get-NetFirewallProfile { [pscustomobject]@{ Enabled = 'True'; DefaultInboundAction = 'Block' } } -ParameterFilter { $PolicyStore -eq 'ActiveStore' }
             Mock Get-NetFirewallHyperVVMSetting { [pscustomobject]@{ DefaultInboundAction = 'NotConfigured' } } -ParameterFilter { $PolicyStore -eq 'ActiveStore' }
             Get-FirewallProfileState -Name 'Domain' | Should-Be 'enabled, inbound Block'
-            Get-WslHyperVInboundState | Should-Be 'NotConfigured'
+            Get-WslHyperVInboundState | Should-Be 'enabled, inbound NotConfigured'
         }
     }
 
@@ -435,7 +505,7 @@ Describe 'Posture readers' {
             Mock Get-PostureRegistryValue { $null }
             Get-ActivityHistoryState | Should-BeLikeString 'not set by policy*Activity history*'
             Mock Get-PostureRegistryValue { 0 }
-            Get-ActivityHistoryState | Should-Be 'off (policy)'
+            Get-ActivityHistoryState | Should-Be 'off (set by policy)'
         }
     }
 

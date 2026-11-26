@@ -52,7 +52,8 @@ function Invoke-PostureRead {
     }
     catch {
         $denied = $_.Exception -is [UnauthorizedAccessException] -or
-        $_.Exception.Message -match 'access is denied|requires elevat|administrator privilege|0x80070005|permission denied'
+        "$($_.Exception.PSObject.Properties['NativeErrorCode']?.Value)" -eq 'AccessDenied' -or
+        $_.Exception.Message -match 'access (is )?denied|requires elevat|administrator privilege|0x80070005|0x80041003|permission denied'
         if (-not (Test-IsElevated) -and ($NeedsAdmin -or $denied)) { throw $script:ElevatedMessage }
         throw
     }
@@ -185,7 +186,7 @@ function Get-SmartAppControlState {
     param()
     $value = Get-RequiredRegistryValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -Name 'VerifiedAndReputablePolicyState'
     switch ([int]$value) {
-        0 { return 'off' }
+        0 { return 'off (cannot be re-enabled without a reinstall)' }
         1 { return 'on' }
         2 { return 'evaluation' }
         default { return "unrecognised value $value" }
@@ -287,7 +288,7 @@ function Get-AsrRuleSummary {
     [CmdletBinding()]
     [OutputType([string])]
     param()
-    $ids = @((Get-DefenderPreference).PSObject.Properties['AttackSurfaceReductionRules_Ids']?.Value | Where-Object { $_ })
+    $ids = @((Get-DefenderPreference).PSObject.Properties['AttackSurfaceReductionRules_Ids']?.Value | Where-Object { $_ -and "$_" -notlike 'N/A*' })
     return "$($ids.Count) rules configured (ASR is documented for Pro/Enterprise)"
 }
 
@@ -334,7 +335,8 @@ function Get-WslHyperVInboundState {
     Assert-CmdletAvailable -Name 'Get-NetFirewallHyperVVMSetting'
     $setting = Invoke-PostureRead -Script { Get-NetFirewallHyperVVMSetting -Name $script:WslHyperVVmCreatorId -PolicyStore ActiveStore }
     if (-not $setting) { throw 'no Hyper-V firewall setting returned for WSL' }
-    return "$($setting.DefaultInboundAction)"
+    $enabled = if ("$($setting.PSObject.Properties['Enabled']?.Value)" -eq 'False') { 'disabled' } else { 'enabled' }
+    return "$enabled, inbound $($setting.DefaultInboundAction)"
 }
 
 # ---------------------------------------------------------------- Network readers
@@ -389,9 +391,13 @@ function Get-PowerShellV2State {
     [CmdletBinding()]
     [OutputType([string])]
     param()
+    # Windows 11 24H2 removed the 2.0 engine (KB5065506, all editions), so the feature has no
+    # Win32_OptionalFeature row. No row is only believed when the query itself works, which
+    # is shown by another feature being found; a CIM failure throws out of Get-FeatureState.
     $state = Get-FeatureState -Name 'MicrosoftWindowsPowerShellV2Root'
-    if ($state -eq 'Unknown') { throw 'MicrosoftWindowsPowerShellV2Root feature state could not be read' }
-    return $state
+    if ($state -ne 'Unknown') { return $state }
+    if ((Get-FeatureState -Name 'SMB1Protocol') -eq 'Unknown') { throw 'the optional-feature list could not be read' }
+    return 'Absent (removed from Windows)'
 }
 
 function Get-RemoteAssistanceState {
@@ -453,12 +459,16 @@ function Get-DiagnosticDataState {
     [OutputType([string])]
     param()
     $value = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' -Name 'AllowTelemetry'
-    if ($null -eq $value) { $value = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection' -Name 'AllowTelemetry' }
+    $suffix = ' (set by policy)'
+    if ($null -eq $value) {
+        $suffix = ''
+        $value = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection' -Name 'AllowTelemetry'
+    }
     if ($null -eq $value) { return 'not set (no Group Policy or Settings value); see Settings > Privacy & security > Diagnostics & feedback' }
     switch ([int]$value) {
-        0 { return 'Security' }
-        1 { return 'Required' }
-        default { return 'Optional' }
+        0 { return "Security$suffix" }
+        1 { return "Required$suffix" }
+        default { return "Optional$suffix" }
     }
 }
 
@@ -470,7 +480,7 @@ function Get-ActivityHistoryState {
     param()
     $value = Get-PostureRegistryValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name 'PublishUserActivities'
     if ($null -eq $value) { return 'not set by policy; see Settings > Privacy & security > Activity history' }
-    return $(if ([int]$value -eq 0) { 'off (policy)' } else { 'on (policy)' })
+    return $(if ([int]$value -eq 0) { 'off (set by policy)' } else { 'on (set by policy)' })
 }
 
 # ---------------------------------------------------------------- Apps and account readers
@@ -481,20 +491,23 @@ function Get-CopilotAppState {
     [CmdletBinding()]
     [OutputType([string])]
     param()
-    if (@(Get-CopilotAppxPackage).Count -gt 0) { return 'installed' }
+    $appxFailure = $null
+    try { if (@(Get-CopilotAppxPackage).Count -gt 0) { return 'installed' } }
+    catch { $appxFailure = $_ }
     $ids = @(Get-WingetInstalledIds)
-    return $(if ($ids -contains 'Microsoft.Copilot' -or $ids -contains 'Microsoft.365Copilot') { 'installed' } else { 'not installed' })
+    if ($ids -contains 'Microsoft.Copilot' -or $ids -contains 'Microsoft.365Copilot') { return 'installed' }
+    if ($appxFailure) { throw $appxFailure }
+    return 'not installed'
 }
 
 function Get-CopilotAppxPackage {
-    # Internal, mockable. Names of installed Microsoft.Copilot* Appx packages; empty when the
-    # Appx cmdlet is missing or fails.
+    # Internal, mockable. Names of installed Microsoft.Copilot* Appx packages. A missing cmdlet
+    # or a failed read throws, so the row is UNKNOWN rather than a false "not installed".
     [CmdletBinding()]
     [OutputType([string[]])]
     param()
-    if ($null -eq (Get-Command -Name 'Get-AppxPackage' -ErrorAction SilentlyContinue)) { return [string[]]@() }
-    try { return [string[]]@(Get-AppxPackage -Name 'Microsoft.Copilot*' | ForEach-Object { $_.Name }) }
-    catch { return [string[]]@() }
+    Assert-CmdletAvailable -Name 'Get-AppxPackage'
+    return [string[]]@(Get-AppxPackage -Name 'Microsoft.Copilot*' | ForEach-Object { $_.Name })
 }
 
 function Get-SimplewallState {
@@ -611,17 +624,17 @@ function Get-PostureChecks {
         New-PostureCheck -Id 'firewall-domain' -Group 'Firewall' -Title 'Domain profile' -Read { Get-FirewallProfileState -Name 'Domain' } -OkPattern $firewallOk -Recommendation $firewall
         New-PostureCheck -Id 'firewall-private' -Group 'Firewall' -Title 'Private profile' -Read { Get-FirewallProfileState -Name 'Private' } -OkPattern $firewallOk -Recommendation $firewall
         New-PostureCheck -Id 'firewall-public' -Group 'Firewall' -Title 'Public profile' -Read { Get-FirewallProfileState -Name 'Public' } -OkPattern $firewallOk -Recommendation $firewall
-        New-PostureCheck -Id 'firewall-wsl' -Group 'Firewall' -Title 'WSL Hyper-V firewall inbound' -Read { Get-WslHyperVInboundState } -OkPattern '^(Block|NotConfigured)$' -Recommendation "Set-NetFirewallHyperVVMSetting -Name '$script:WslHyperVVmCreatorId' -DefaultInboundAction Block (elevated)."
+        New-PostureCheck -Id 'firewall-wsl' -Group 'Firewall' -Title 'WSL Hyper-V firewall inbound' -Read { Get-WslHyperVInboundState } -OkPattern $firewallOk -Recommendation "Turn the Hyper-V firewall for WSL back on and block inbound: Set-NetFirewallHyperVVMSetting -Name '$script:WslHyperVVmCreatorId' -Enabled True -DefaultInboundAction Block (elevated)."
         New-PostureCheck -Id 'port-proxy' -Group 'Network' -Title 'Port proxy' -Read { Get-PortProxyState } -OkPattern '^none$' -Recommendation 'Remove entries with netsh interface portproxy delete (elevated).'
         New-PostureCheck -Id 'exposed-listeners' -Group 'Network' -Title 'WSL/Docker listeners' -Read { Get-ExposedListenerState } -OkPattern '^none$' -Recommendation 'Bind the service to 127.0.0.1; never mirrored mode or a LAN bind (ADR-006).'
         New-PostureCheck -Id 'smb1' -Group 'Legacy' -Title 'SMBv1' -Read { Get-Smb1State } -OkPattern '^(Disabled|Absent)$' -Recommendation 'Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol (elevated).'
-        New-PostureCheck -Id 'powershell-v2' -Group 'Legacy' -Title 'PowerShell 2.0 engine' -Read { Get-PowerShellV2State } -OkPattern '^(Disabled|Absent)$' -Recommendation 'Disable the MicrosoftWindowsPowerShellV2Root optional feature (elevated).'
-        New-PostureCheck -Id 'remote-assistance' -Group 'Legacy' -Title 'Remote Assistance' -Read { Get-RemoteAssistanceState } -OkPattern '^off$' -Recommendation 'System > Remote Desktop / sysdm.cpl > Remote, untick Remote Assistance.'
+        New-PostureCheck -Id 'powershell-v2' -Group 'Legacy' -Title 'PowerShell 2.0 engine' -Read { Get-PowerShellV2State } -OkPattern '^(Disabled|Absent)' -Recommendation 'Disable the MicrosoftWindowsPowerShellV2Root optional feature (elevated).'
+        New-PostureCheck -Id 'remote-assistance' -Group 'Legacy' -Title 'Remote Assistance' -Read { Get-RemoteAssistanceState } -OkPattern '^off$' -Recommendation 'Run SystemPropertiesRemote.exe (System Properties > Remote) and untick Allow Remote Assistance connections (asks for administrator approval).'
         New-PostureCheck -Id 'autoplay' -Group 'Legacy' -Title 'AutoPlay' -Read { Get-AutoplayState } -OkPattern '^off$' -Recommendation 'Settings > Bluetooth & devices > AutoPlay, off.'
         New-PostureCheck -Id 'advertising-id' -Group 'Privacy' -Title 'Advertising ID' -Read { Get-AdvertisingIdState } -OkPattern '^off$' -Recommendation 'Settings > Privacy & security > General.'
         New-PostureCheck -Id 'tailored-experiences' -Group 'Privacy' -Title 'Tailored experiences' -Read { Get-TailoredExperiencesState } -OkPattern '^off$' -Recommendation 'Settings > Privacy & security > Diagnostics & feedback.'
-        New-PostureCheck -Id 'diagnostic-data' -Group 'Privacy' -Title 'Diagnostic data' -Read { Get-DiagnosticDataState } -OkPattern '^(Required|Security)$' -InfoPattern '^not set' -Recommendation 'Diagnostics & feedback > Send optional diagnostic data, off.'
-        New-PostureCheck -Id 'activity-history' -Group 'Privacy' -Title 'Activity history' -Read { Get-ActivityHistoryState } -OkPattern '^off \(policy\)$' -InfoPattern '^not set' -Recommendation 'Settings > Privacy & security > Activity history.'
+        New-PostureCheck -Id 'diagnostic-data' -Group 'Privacy' -Title 'Diagnostic data' -Read { Get-DiagnosticDataState } -OkPattern '^(Required|Security)( \(set by policy\))?$' -InfoPattern '^not set' -Recommendation 'Diagnostics & feedback > Send optional diagnostic data, off. If the value says set by policy, the Settings toggle is locked; remove the policy value first.'
+        New-PostureCheck -Id 'activity-history' -Group 'Privacy' -Title 'Activity history' -Read { Get-ActivityHistoryState } -OkPattern '^off \(set by policy\)$' -InfoPattern '^not set' -Recommendation 'Settings > Privacy & security > Activity history. If the value says set by policy, the Settings toggle is locked; remove the policy value first.'
         New-PostureCheck -Id 'copilot-apps' -Group 'Apps' -Title 'Copilot apps' -Read { Get-CopilotAppState } -Recommendation 'The operator decides.'
         New-PostureCheck -Id 'simplewall' -Group 'Apps' -Title 'simplewall filtering' -Read { Get-SimplewallState } -Recommendation 'Installed; enable and configure filtering in simplewall yourself (it blocks outbound traffic until you allow apps).'
         New-PostureCheck -Id 'admin-account' -Group 'Account' -Title 'Daily account is an administrator' -Read { Get-AdminAccountState } -Recommendation 'Operator decision: the daily account is an administrator.'
