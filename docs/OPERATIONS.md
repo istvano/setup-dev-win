@@ -341,10 +341,10 @@ acceptance machine (Windows 11 Home), profiles
 
 - [x] 2026-11-26: the default profiles and the opt-in extras installed with no elevated
       run; the only failure was ChatGPT from the winget source (see below).
-- [ ] Chrome and Firefox installed by hand and a run with `productivity-extra` adopts
-      them: no second copy. 2026-11-26: Firefox was reported `already installed`; Chrome
-      was not matched by `winget list` and its installer ran (`Installed Google
-      Chrome`). Check Settings > Apps for a second Chrome entry.
+- [x] 2026-11-26: Chrome and Firefox installed by hand end up as one copy each. Firefox
+      was reported `already installed`; Chrome was not matched by `winget list`, so its
+      installer ran (`Installed Google Chrome`) and updated the existing copy in place:
+      Settings > Apps shows a single Chrome.
 - [x] 2026-11-26: Windows Terminal (inbox) is reported already installed.
 - [x] 2026-11-26: a failed app fails only that app: the stage named it, the run continued
       through `dotfiles`, `wsl` and `verify` and exited 1 (seen with ChatGPT rather than a
