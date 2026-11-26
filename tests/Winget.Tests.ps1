@@ -31,9 +31,9 @@ Describe 'Test-WingetPackage' {
             ($AllowExitCode -join ',') -eq '-1978335212'
         }
     }
-    It 'throws on any other code (the native failure surfaces)' {
-        Mock -ModuleName Winget Invoke-Native { throw 'winget.exe exited with code 5.' }
-        { Test-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*code 5*'
+    It 'throws on any other code, naming the Id and keeping the code' {
+        Mock -ModuleName Winget Invoke-Native { throw 'winget.exe exited with code 5. some tail' }
+        { Test-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*code 5*some tail*'
     }
 }
 
@@ -93,9 +93,9 @@ Describe 'Install-WingetPackage' {
         $script:Code = -1978334966
         { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*restart Windows, then re-run*'
     }
-    It 'an unmapped code throws with the Id and the code' {
-        $script:Code = 1603
-        { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*1603*'
+    It 'an unmapped failure throws naming the Id, the code and winget''s tail' {
+        Mock -ModuleName Winget Invoke-Native { throw 'winget.exe exited with code 1603. some tail' }
+        { Install-WingetPackage -Id 'Git.Git' } | Should-Throw -ExceptionMessage '*Git.Git*1603*some tail*'
     }
 }
 
@@ -130,6 +130,10 @@ Describe 'Get-WingetInstalledIds' {
         $script:Json = '{"Sources":[{"SourceDetails":{}}]}'
         @(Get-WingetInstalledIds).Count | Should-Be 0
         $script:Json = '{}'
+        @(Get-WingetInstalledIds).Count | Should-Be 0
+    }
+    It 'returns no Ids when the export file is empty' {
+        $script:Json = ''
         @(Get-WingetInstalledIds).Count | Should-Be 0
     }
 }

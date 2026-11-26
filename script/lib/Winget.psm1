@@ -39,7 +39,12 @@ function Test-WingetPackage {
         'list', '--id', $Id, '--exact', '--source', 'winget',
         '--accept-source-agreements', '--disable-interactivity'
     )
-    $result = Invoke-Native -FilePath 'winget.exe' -ArgumentList $arguments -AllowExitCode @($script:NotFoundCode)
+    try {
+        $result = Invoke-Native -FilePath 'winget.exe' -ArgumentList $arguments -AllowExitCode @($script:NotFoundCode)
+    }
+    catch {
+        throw "winget could not check whether $Id is installed. $($_.Exception.Message)"
+    }
     return ($result.ExitCode -eq 0)
 }
 
@@ -67,7 +72,13 @@ function Install-WingetPackage {
     if ($Scope) { $arguments += @('--scope', $Scope) }
 
     $allowed = @($script:AlreadyInstalledCodes) + @($script:RebootRequiredCode) + @($script:FailureReasons.Keys)
-    $result = Invoke-Native -FilePath 'winget.exe' -ArgumentList $arguments -AllowExitCode ([int[]]$allowed)
+    try {
+        $result = Invoke-Native -FilePath 'winget.exe' -ArgumentList $arguments -AllowExitCode ([int[]]$allowed)
+    }
+    catch {
+        # An unmapped code (or winget missing): keep the exit code and winget's tail, add the Id.
+        throw "winget could not install $Id. $($_.Exception.Message)"
+    }
     $code = $result.ExitCode
 
     if ($code -eq 0) { return 'installed' }
@@ -95,6 +106,7 @@ function Get-WingetInstalledIds {
         $null = Invoke-Native -FilePath 'winget.exe' -ArgumentList $arguments
         $export = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         $ids = [System.Collections.Generic.List[string]]::new()
+        if (-not $export) { return [string[]]@() }
         foreach ($source in @($export.PSObject.Properties['Sources']?.Value).Where({ $_ })) {
             foreach ($package in @($source.PSObject.Properties['Packages']?.Value).Where({ $_ })) {
                 $ids.Add([string]$package.PackageIdentifier)
