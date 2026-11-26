@@ -18,7 +18,7 @@ Default: `core,dev,security,productivity`.
 
 | Profile | Default | Packages |
 |---|---|---|
-| core | yes | Windows Terminal, PowerShell, Git, chezmoi, JetBrains Mono Nerd Font |
+| core | yes | Windows Terminal, PowerShell, Git, chezmoi, JetBrainsMono Nerd Font Mono |
 | dev | yes | Visual Studio Code, Zed |
 | security | yes | Bitwarden, simplewall |
 | productivity | yes | Obsidian |

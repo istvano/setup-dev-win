@@ -40,7 +40,9 @@ the default (ADR-015).
 | wsl | image resolved from Microsoft's manifest, cached in `<root>\cache`, SHA256-verified; install `dev`, default user, password, handoff to the Linux repo | none |
 | verify | read-only checks, always run (see OPERATIONS), including the Apps check and an informational drift line | none |
 
-Stage order is `preflight, features, apps, dotfiles, wsl, verify`. The catalogue is
+Stage order is `preflight, features, apps, dotfiles, wsl, verify`. A failed stage stops the
+run, except `apps`: it is recorded failed and the run continues, ending with exit 1
+(ADR-022). The catalogue is
 `profiles/apps.psd1` (read by `script/lib/Apps.psm1`); winget calls go through
 `script/lib/Winget.psm1`, which maps winget return codes to outcomes; drift ignores the
 patterns in `profiles/drift-allowlist.psd1`. The stage lives in

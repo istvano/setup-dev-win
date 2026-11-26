@@ -33,9 +33,9 @@ Status: accepted. Spec section 6.3.
 
 Windows has no download-and-run script. The only network-to-execution paths are
 winget (hash-pinned, Microsoft-validated), `git clone` of the operator's own
-repositories and the SHA256-verified Ubuntu image (the hash comes from Microsoft's
-manifest, ADR-016). Stage-0 never downloads winget and
-never installs a module from PSGallery. `Invoke-Expression`, `iex` and
+repositories, the SHA256-verified Ubuntu image (the hash comes from Microsoft's
+manifest, ADR-016) and the SHA256-verified Nerd Font zip from GitHub (ADR-021; never
+executed). Stage-0 never downloads winget and never installs a module from PSGallery. `Invoke-Expression`, `iex` and
 `DownloadString` are banned and enforced by `tests/Repo.Tests.ps1`.
 
 Stage-0 does not call `Set-ExecutionPolicy`. The documented launch is
@@ -394,7 +394,8 @@ The apps stage installs the packages of the selected profiles with a plain loop 
 processor, and DSC v3 is the separate `Microsoft.DSC` package: one more dependency to
 install and trust before any app. It runs units declaratively and possibly in parallel
 and leaves the results to be checked afterwards, whereas the loop knows per package
-which outcome happened and names the package Id with a clear message per known return code, plus winget's own text for anything else. A loop
+which outcome happened and names the package Id with a clear message per known return
+code, plus winget's own text for anything else. A loop
 adopts what is already there (below) with a mockable exit-code check. And stage-0 and
 chezmoi already install through the same `winget install` calls, so there is one
 mechanism, not two.
@@ -431,7 +432,11 @@ files, by leaf name, into the per-user fonts directory with HKCU registration. N
 elevation, no web call when the font is already installed. The font belongs to `core`
 and runs after the packages. This is the one place the repository downloads a
 non-winget artefact besides the Ubuntu image; it is hash-verified and never executed
-(ADR-003).
+(ADR-003). The digest and the download URL come from the same GitHub API response, so
+the hash guards against corruption and transport or CDN tampering, not against a
+compromised upstream release (unlike the Ubuntu image, whose hash comes from
+Microsoft's separate manifest). The family name registered is `JetBrainsMono Nerd Font
+Mono`.
 
 ## ADR-022: Profiles and the apps stage
 
@@ -441,7 +446,7 @@ Eight profiles, in catalogue order: `core`, `dev`, `security`, `productivity`, `
 `productivity-extra`, `local-llm`, `lab` (no packages; Hyper-V only, Pro only). The
 default set is `core,dev,security,productivity`; `core` is always included. `backup`
 (restic, rclone) is opt-in by operator decision, not part of the default. The default
-set is capped at 40 entries (8 packages today, plus the font) so the baseline stays reviewable.
+set is capped at 40 entries (9 packages today: core 4, dev 2, security 2, productivity 1, plus the font) so the baseline stays reviewable.
 `productivity-extra` holds Chrome, Firefox, Slack, Claude, ChatGPT, OBS Studio, mpv.net,
 Tailscale and OpenVPN. Firefox is the regular `Mozilla.Firefox`, not the Developer
 Edition (operator decision). Hand-installed apps are adopted (ADR-020).
@@ -453,3 +458,10 @@ value kept in `state.json` by an earlier run wins over the new default (flag, th
 value, then default, ADR-015), so a machine that persisted `core` in milestone 1 gets
 only `core` until the operator passes `-Profiles core,dev,security,productivity`.
 Installer UAC prompts come from the installers themselves (OPERATIONS).
+
+A failed `apps` stage does not stop the run (controller ruling, 2026-11-26): the runner
+records `apps` as failed, warns, runs the remaining stages and ends with exit 1 (a later
+reboot-required still returns 3010 at once). One package that cannot install must not
+block dotfiles, WSL and verify, and `-Stage apps` retries it. Every other stage keeps
+stop-on-failure, because their successors depend on them. The first line shows the
+profiles in use, the default and the available profiles.

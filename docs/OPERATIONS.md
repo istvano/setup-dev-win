@@ -48,7 +48,7 @@ prompts on a first run, each from the source named:
 | Git installer | README step 2 (`winget install Git.Git`), before this repository runs |
 | PowerShell 7 | stage-0 installs the latest stable package, which is MSIX: a per-user install that normally raises no prompt (ADR-016) |
 | Enable Windows features and install WSL | this repository: `script/elevated/Enable-Features.ps1`, one prompt for all missing features plus `wsl --install --no-distribution` and `wsl --update` when WSL is missing or too old (ADR-018) |
-| App installers that need admin | winget, per package (the apps stage never elevates); a declined prompt fails only that app |
+| App installers that need admin | winget, per package (the apps stage never elevates); a declined prompt fails only that app; the run continues (ADR-022) |
 
 A re-run with everything in place raises none of them.
 
@@ -61,11 +61,14 @@ Things to expect:
   the stage prints the new ones after a failure. If a restart is needed the run exits
   3010; see "After a reboot".
 - `apps` prints `Profiles: ...` first, then installs what is missing with winget and
-  the JetBrains Mono Nerd Font (per user, SHA256-verified, no prompt). It runs on every
+  the `JetBrainsMono Nerd Font Mono` font (per user, SHA256-verified, no prompt). It runs on every
   setup run, so a profile added later installs. An app already installed by hand is
-  adopted, never duplicated. One failed package does not stop the rest: the stage
-  fails naming each Id and reason; `pwsh -File script\setup.ps1 -Stage apps` retries
-  only what is missing.
+  adopted, never duplicated. One failed package does not stop the other packages: the
+  stage fails naming each Id and reason. A failed `apps` stage does not stop the run
+  either: it is recorded failed, `dotfiles`, `wsl` and `verify` still run, and the run
+  exits 1 (or 3010 if a later stage needs a restart). Every other stage still stops the
+  run on failure. `pwsh -File script\setup.ps1 -Stage apps` retries only what is missing.
+  The first line shows the profiles in use, the default and the available profiles.
 - `dotfiles` installs the latest stable chezmoi when none is present and applies
   `.wslconfig` (sections `[wsl2]`, `[general]`, `[experimental]`). An existing,
   different `.wslconfig` is backed up to `.wslconfig.backup.<timestamp>` first. Run
@@ -339,10 +342,19 @@ with the date when observed on hardware.
 - [ ] Chrome and Firefox installed by hand and a run with `productivity-extra` adopts
       them: no second copy, the stage reports `Adopted` or `already installed`.
 - [ ] Windows Terminal (inbox) is reported already installed.
-- [ ] Declining one installer UAC prompt fails only that app; the stage names it and a
-      re-run installs just that one.
+- [ ] Declining one installer UAC prompt fails only that app; the stage names it, the
+      run continues through `dotfiles`, `wsl` and `verify` and exits 1, and a re-run of
+      `-Stage apps` installs just that one.
 - [ ] `verify` prints the `apps not in any profile` line and lists real extras.
-- [ ] JetBrains Mono Nerd Font Mono appears in Windows Terminal's font list.
+- [ ] Close every Windows Terminal window (sign out if it is still missing), then
+      `JetBrainsMono Nerd Font Mono` is in Terminal's font list.
+- [ ] An immediate second `pwsh -File script\setup.ps1` run reports every app already
+      installed, installs nothing and raises no UAC prompt.
+- [ ] `Anthropic.Claude` and `OpenAI.ChatGPT` (MSIX packages that declare services)
+      install from the non-elevated run; record whether a Store-installed ChatGPT is
+      adopted.
+- [ ] Record the drift line's output on the machine and tune
+      `profiles/drift-allowlist.psd1`.
 - [ ] A machine with `profiles = core` kept from milestone 1 prints the profiles line and
       the `-Profiles` hint.
 

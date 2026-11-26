@@ -61,7 +61,9 @@ package exists.
   (`MinPowerShell`, `MinOsBuild`, `MinWslVersion`, `LinuxRepoOwner`); no
   installed-version pins. ASCII only.
 - `wsl/ubuntu.lock.psd1`: the distro `Name` and manifest `Source`. ASCII only.
-- `profiles/*.winget.yaml`: WinGet Configuration files, one per profile.
+- `profiles/apps.psd1`: the app catalogue: profiles, default set and cap (ADR-020,
+  ADR-022). `profiles/drift-allowlist.psd1`: inbox and OEM Ids the drift line ignores.
+  winget calls for apps go only through `script/lib/Winget.psm1`.
 - `chezmoi/`: Windows-side user configuration.
 - `tests/`: Pester 6 tests; `tests/tool-versions.psd1` pins the gate's own tools.
 - `docs/ARCHITECTURE.md`: current boundaries. `docs/DECISIONS.md`: the ADR log.
