@@ -514,7 +514,8 @@ shell enabled bracketed paste, as Ghostty's paste protection does on the Mac);
 padding `8, 6`; the two schemes themselves, added or replaced by name; and one profile
 `dev` with the command line `wsl.exe -d dev --cd ~`. The font and the Catppuccin palette
 match the Mac's Ghostty. The scheme colours are copied from catppuccin/windows-terminal at
-commit `4d8bb2f` (recorded in `script/lib/TerminalSettings.psm1`). The dynamic profile
+commit `4d8bb2f` (recorded in `script/lib/TerminalSettings.psm1`). (The colour scheme part
+of this paragraph is superseded by ADR-028; the rest stands.) The dynamic profile
 that Terminal generates for the distro (named `dev`, source `Windows.Terminal.Wsl` or
 `Microsoft.WSL`) is set hidden so there is one `dev` entry, ours.
 
@@ -653,3 +654,27 @@ does not run it from its install either. The Mac creates no application launcher
 the command, so no Start-menu shortcuts are created here. Firefox is the release build
 the catalogue installs (`Mozilla.Firefox`), not the Developer Edition the Mac uses.
 Whether to sync in a profile is the operator's choice (OPERATIONS, "Browser profiles").
+
+## ADR-028: Windows Terminal uses the built-in Solarized Light scheme
+
+Status: accepted, 2026-11-27; operator decision. Supersedes the colour part of ADR-024.
+
+The operator wants Solarized Light in every Terminal window, whatever the Windows theme,
+instead of Catppuccin Mocha or Latte following it. `Solarized Light` is built into
+Windows Terminal (microsoft/terminal, `src/cascadia/TerminalSettingsModel/defaults.json`:
+background `#FDF6E3`, foreground `#657B83`, brightWhite `#FDF6E3`), so the repository
+declares no scheme any more: `Get-CatppuccinScheme` and the `schemes` merge are gone.
+
+`profiles.defaults.colorScheme` is the plain string `Solarized Light`, not the
+`{ dark, light }` object; `Merge-TerminalSettings` replaces the old object and
+`Test-TerminalSettings` reports it as drift. `profiles.defaults.intenseTextStyle` is
+`bold`. Terminal's default, `bright`, paints bold text with the bright palette slots; in
+Solarized those hold the base tones and brightWhite equals the background, so bold white
+text would be invisible. `bold` keeps the normal colour and only thickens the glyphs.
+
+Schemes already in the operator's `settings.json`, including the Catppuccin entries an
+earlier run added, are left where they are: the module's rule is that operator content
+survives (ADR-024). They are now unused, and the operator may delete them in the Settings
+UI. The font stays `JetBrainsMono Nerd Font Mono`. Colour parity with the Mac is kept:
+setup-dev-mac makes the same change (Ghostty `iTerm2 Solarized Light`), and bat uses its
+built-in `Solarized (light)` on both the Mac and WSL.

@@ -491,7 +491,7 @@ To run after a full setup pass on a machine with `core,dev` selected. Mark each 
 the date when observed on hardware.
 
 - [ ] Windows Terminal opens `dev` by default, in `JetBrainsMono Nerd Font Mono`, with
-      Catppuccin Mocha or Latte following the Windows theme.
+      Solarized Light, whatever the Windows theme.
 - [ ] `dev` from a new pwsh opens in the Linux home directory (`pwd` prints
       `/home/<user>`), not under `/mnt/c` (the quoted `'~'` of ADR-024).
 - [ ] Terminal's profile dropdown shows exactly one `dev`.
