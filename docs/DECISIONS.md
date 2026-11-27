@@ -675,5 +675,6 @@ text would be invisible. `bold` keeps the normal colour and only thickens the gl
 Schemes already in the operator's `settings.json`, including the Catppuccin entries an
 earlier run added, are left where they are: the module's rule is that operator content
 survives (ADR-024). They are now unused, and the operator may delete them in the Settings
-UI. The font stays `JetBrainsMono Nerd Font Mono`. This breaks colour parity with the
-Mac's Ghostty, which is an accepted consequence of the operator's choice.
+UI. The font stays `JetBrainsMono Nerd Font Mono`. Colour parity with the Mac is kept:
+setup-dev-mac makes the same change (Ghostty `iTerm2 Solarized Light`), and bat uses its
+built-in `Solarized (light)` on both the Mac and WSL.
