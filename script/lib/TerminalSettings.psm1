@@ -15,63 +15,10 @@ $script:ProfileGuid = '{6f9c1a52-3d4e-4b8a-9c17-2e5d8f0b7a31}'
 $script:LegacyWarningKeys = @('multiLinePasteWarning', 'largePasteWarning', 'confirmCloseAllTabs', 'warning.confirmCloseAllTabs')
 $script:DynamicSources = @('Windows.Terminal.Wsl', 'Microsoft.WSL')
 
-# Catppuccin scheme colours are copied verbatim from mocha.json and latte.json of
-# github.com/catppuccin/windows-terminal at commit
-# 4d8bb2f00fb86927a98dd3502cdec74a76d25d7b (fetched 2026-11-26).
-function Get-CatppuccinScheme {
-    # Internal. A fresh copy of one declared scheme per call.
-    [CmdletBinding()]
-    [OutputType([hashtable])]
-    param([Parameter(Mandatory)][ValidateSet('Mocha', 'Latte')][string]$Flavour)
-    if ($Flavour -eq 'Mocha') {
-        return [ordered]@{
-            name = 'Catppuccin Mocha'
-            cursorColor = '#F5E0DC'
-            selectionBackground = '#585B70'
-            background = '#1E1E2E'
-            foreground = '#CDD6F4'
-            black = '#45475A'
-            red = '#F38BA8'
-            green = '#A6E3A1'
-            yellow = '#F9E2AF'
-            blue = '#89B4FA'
-            purple = '#F5C2E7'
-            cyan = '#94E2D5'
-            white = '#BAC2DE'
-            brightBlack = '#585B70'
-            brightRed = '#F38BA8'
-            brightGreen = '#A6E3A1'
-            brightYellow = '#F9E2AF'
-            brightBlue = '#89B4FA'
-            brightPurple = '#F5C2E7'
-            brightCyan = '#94E2D5'
-            brightWhite = '#A6ADC8'
-        }
-    }
-    return [ordered]@{
-        name = 'Catppuccin Latte'
-        cursorColor = '#DC8A78'
-        selectionBackground = '#ACB0BE'
-        background = '#EFF1F5'
-        foreground = '#4C4F69'
-        black = '#5C5F77'
-        red = '#D20F39'
-        green = '#40A02B'
-        yellow = '#DF8E1D'
-        blue = '#1E66F5'
-        purple = '#EA76CB'
-        cyan = '#179299'
-        white = '#ACB0BE'
-        brightBlack = '#ACB0BE'
-        brightRed = '#D20F39'
-        brightGreen = '#40A02B'
-        brightYellow = '#DF8E1D'
-        brightBlue = '#1E66F5'
-        brightPurple = '#EA76CB'
-        brightCyan = '#179299'
-        brightWhite = '#BCC0CC'
-    }
-}
+# The colour scheme is Windows Terminal's built-in 'Solarized Light' (defined in
+# microsoft/terminal, src/cascadia/TerminalSettingsModel/defaults.json), so this
+# repository declares no scheme of its own and merges no 'schemes' entry. Schemes
+# already in the operator's file are left alone (ADR-028).
 
 function Get-TerminalSettingsPath {
     # Internal, mockable. The stable Terminal's settings.json.
@@ -185,7 +132,12 @@ function Merge-TerminalSettings {
     }
     $defaults['font']['face'] = 'JetBrainsMono Nerd Font Mono'
     $defaults['font']['size'] = 12
-    $defaults['colorScheme'] = @{ dark = 'Catppuccin Mocha'; light = 'Catppuccin Latte' }
+    $defaults['colorScheme'] = 'Solarized Light'
+    # Terminal's default intenseTextStyle 'bright' paints bold text with the bright
+    # palette slots. In Solarized those hold the base tones and brightWhite equals the
+    # background (#FDF6E3), so bold white text would be invisible. 'bold' keeps the
+    # normal colour and only thickens the glyphs.
+    $defaults['intenseTextStyle'] = 'bold'
     $defaults['padding'] = '8, 6'
 
     $list = [System.Collections.Generic.List[object]]::new()
@@ -209,18 +161,6 @@ function Merge-TerminalSettings {
     $dev['commandline'] = 'wsl.exe -d dev --cd ~'
     $dev['hidden'] = $false
     $profiles['list'] = $list.ToArray()
-
-    # schemes: added or replaced by name.
-    $schemes = [System.Collections.Generic.List[object]]::new()
-    if ($merged.ContainsKey('schemes') -and $merged['schemes'] -is [System.Collections.IList]) {
-        foreach ($item in $merged['schemes']) { $schemes.Add($item) }
-    }
-    foreach ($flavour in 'Mocha', 'Latte') {
-        $scheme = Get-CatppuccinScheme -Flavour $flavour
-        $at = Find-ByKey -List $schemes -Key 'name' -Match $scheme['name']
-        if ($at -ge 0) { $schemes[$at] = $scheme } else { $schemes.Add($scheme) }
-    }
-    $merged['schemes'] = $schemes.ToArray()
 
     return $merged
 }
@@ -310,10 +250,11 @@ function Test-TerminalSettings {
     foreach ($k in 'face', 'size') {
         if (-not ($font -is [System.Collections.IDictionary] -and $font.Contains($k) -and $font[$k] -eq $want['font'][$k])) { return "profiles.defaults.font.$k is not $($want['font'][$k])" }
     }
+    # A string only: the old { dark, light } object form is drift.
     $scheme = if ($defaults -is [System.Collections.IDictionary] -and $defaults.Contains('colorScheme')) { $defaults['colorScheme'] } else { $null }
-    foreach ($k in 'dark', 'light') {
-        if (-not ($scheme -is [System.Collections.IDictionary] -and $scheme.Contains($k) -and $scheme[$k] -ceq $want['colorScheme'][$k])) { return "profiles.defaults.colorScheme.$k is not $($want['colorScheme'][$k])" }
-    }
+    if (-not ($scheme -is [string] -and $scheme -ceq $want['colorScheme'])) { return "profiles.defaults.colorScheme is not $($want['colorScheme'])" }
+    $intense = if ($defaults -is [System.Collections.IDictionary] -and $defaults.Contains('intenseTextStyle')) { $defaults['intenseTextStyle'] } else { $null }
+    if (-not ($intense -is [string] -and $intense -ceq $want['intenseTextStyle'])) { return "profiles.defaults.intenseTextStyle is not $($want['intenseTextStyle'])" }
     if (-not ($defaults -is [System.Collections.IDictionary] -and $defaults.Contains('padding') -and $defaults['padding'] -ceq $want['padding'])) { return "profiles.defaults.padding is not $($want['padding'])" }
 
     $list = @(if ($profiles -is [System.Collections.IDictionary] -and $profiles.Contains('list') -and $profiles['list'] -is [System.Collections.IList]) { $profiles['list'] })
@@ -324,14 +265,6 @@ function Test-TerminalSettings {
         if (-not ($list[$at].Contains($k) -and $list[$at][$k] -ceq $wantDev[$k])) { return "dev profile $k is not $($wantDev[$k])" }
     }
 
-    $schemes = @(if ($s.ContainsKey('schemes') -and $s['schemes'] -is [System.Collections.IList]) { $s['schemes'] })
-    foreach ($wantScheme in $declared['schemes']) {
-        $at = Find-ByKey -List $schemes -Key 'name' -Match $wantScheme['name']
-        if ($at -lt 0) { return "scheme $($wantScheme['name']) is missing" }
-        foreach ($k in $wantScheme.Keys) {
-            if (-not ($schemes[$at].Contains($k) -and $schemes[$at][$k] -ceq $wantScheme[$k])) { return "scheme $($wantScheme['name']) differs at $k" }
-        }
-    }
     return ''
 }
 

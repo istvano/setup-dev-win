@@ -44,8 +44,9 @@ Describe 'Merge-TerminalSettings' {
         $d = (Merge-TerminalSettings -Settings @{}).profiles.defaults
         $d.font.face | Should-Be 'JetBrainsMono Nerd Font Mono'
         $d.font.size | Should-Be 12
-        $d.colorScheme.dark | Should-Be 'Catppuccin Mocha'
-        $d.colorScheme.light | Should-Be 'Catppuccin Latte'
+        $d.colorScheme | Should-Be 'Solarized Light'
+        ($d.colorScheme -is [string]) | Should-BeTrue
+        $d.intenseTextStyle | Should-Be 'bold'
         $d.padding | Should-Be '8, 6'
     }
 
@@ -57,18 +58,15 @@ Describe 'Merge-TerminalSettings' {
         $p[0].hidden | Should-BeFalse
     }
 
-    It 'adds both Catppuccin schemes with the upstream colours' {
-        $s = (Merge-TerminalSettings -Settings @{}).schemes
-        $mocha = @($s | Where-Object { $_.name -eq 'Catppuccin Mocha' })
-        $latte = @($s | Where-Object { $_.name -eq 'Catppuccin Latte' })
-        $mocha.Count | Should-Be 1
-        $latte.Count | Should-Be 1
-        $mocha[0].background | Should-Be '#1E1E2E'
-        $mocha[0].foreground | Should-Be '#CDD6F4'
-        $mocha[0].brightWhite | Should-Be '#A6ADC8'
-        $latte[0].background | Should-Be '#EFF1F5'
-        $latte[0].foreground | Should-Be '#4C4F69'
-        $latte[0].purple | Should-Be '#EA76CB'
+    It 'declares no scheme of its own' {
+        (Merge-TerminalSettings -Settings @{}).ContainsKey('schemes') | Should-BeFalse
+    }
+
+    It 'replaces an old dark/light colorScheme object with the string' {
+        $old = @{ profiles = @{ defaults = @{ colorScheme = @{ dark = 'Catppuccin Mocha'; light = 'Catppuccin Latte' } } } }
+        $m = Merge-TerminalSettings -Settings $old
+        ($m.profiles.defaults.colorScheme -is [string]) | Should-BeTrue
+        $m.profiles.defaults.colorScheme | Should-Be 'Solarized Light'
     }
 
     It 'keeps operator profiles, schemes, actions and unknown keys' {
@@ -84,7 +82,8 @@ Describe 'Merge-TerminalSettings' {
         ($m.profiles.list | Where-Object { $_.name -eq 'Operator' }).commandline | Should-Be 'cmd.exe'
         @($m.schemes | Where-Object { $_.name -eq 'Operator Scheme' }).Count | Should-Be 1
         @($m.schemes | Where-Object { $_.name -eq 'Catppuccin Mocha' }).Count | Should-Be 1
-        ($m.schemes | Where-Object { $_.name -eq 'Catppuccin Mocha' }).background | Should-Be '#1E1E2E'
+        # An operator's own scheme, even one named like a former declared scheme, is not touched.
+        ($m.schemes | Where-Object { $_.name -eq 'Catppuccin Mocha' }).background | Should-Be '#FFFFFF'
     }
 
     It 'hides the dynamic dev profile from both sources and leaves other dynamic profiles' {
@@ -243,11 +242,25 @@ Describe 'Test-TerminalSettings' {
         Test-TerminalSettings | Should-BeLikeString '*defaultProfile*'
     }
 
-    It 'names a missing scheme' {
+    It 'reports drift for the old dark/light colorScheme object' {
         $m = Merge-TerminalSettings -Settings @{}
-        $m.schemes = @()
+        $m.profiles.defaults.colorScheme = @{ dark = 'Catppuccin Mocha'; light = 'Catppuccin Latte' }
         $m | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $script:File
-        Test-TerminalSettings | Should-BeLikeString '*Catppuccin Mocha*'
+        Test-TerminalSettings | Should-Be 'profiles.defaults.colorScheme is not Solarized Light'
+    }
+
+    It 'reports drift for another scheme name or letter case' {
+        $m = Merge-TerminalSettings -Settings @{}
+        $m.profiles.defaults.colorScheme = 'solarized light'
+        $m | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $script:File
+        Test-TerminalSettings | Should-BeLikeString '*colorScheme is not Solarized Light*'
+    }
+
+    It 'names intenseTextStyle when it is not bold' {
+        $m = Merge-TerminalSettings -Settings @{}
+        $m.profiles.defaults.intenseTextStyle = 'bright'
+        $m | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $script:File
+        Test-TerminalSettings | Should-BeLikeString '*intenseTextStyle is not bold*'
     }
 
     It 'reports a missing file' {
